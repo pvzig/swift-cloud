@@ -4,8 +4,8 @@
 
 Add a first-class Google Cloud provider to Swift Cloud using the same module,
 provider, resource, component, and Pulumi YAML patterns as the existing cloud
-providers. Flock is the reference workload: a Swift gRPC service on Cloud Run
-that publishes to Pub/Sub, connects to Cloud SQL, and may run an observability
+providers. The reference workload is a Swift gRPC service on Cloud Run that
+publishes to Pub/Sub, connects to Cloud SQL, and may run an observability
 sidecar.
 
 ## Scope
@@ -32,8 +32,8 @@ sidecar.
 - Support PostgreSQL and MySQL Cloud SQL instances and logical databases.
 - Add focused Swift Testing coverage for generated Pulumi resource shapes and
   provider configuration.
-- Document a GCP project example based on Flock's Cloud Run, Pub/Sub, and Cloud
-  SQL topology.
+- Document a GCP project example based on a production Cloud Run, Pub/Sub, and
+  Cloud SQL topology.
 
 ## Design boundaries
 
@@ -45,7 +45,7 @@ sidecar.
   Operators run `gcloud auth configure-docker REGION-docker.pkg.dev` before a
   deployment that pushes an image.
 - The first slice does not generate Cloud Endpoints/ESPv2 configuration, create
-  application secrets, or encode Flock's application-specific Pulumi policy.
+  application secrets, or encode application-specific Pulumi policy.
   Those can compose from raw resources or become later components when their
   contracts are proven independently.
 - Cloud SQL creates the instance and logical database, but not a password-based

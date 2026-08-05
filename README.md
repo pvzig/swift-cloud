@@ -501,7 +501,7 @@ return Outputs([
 
 GCP support follows the same provider-specific component model as AWS. Google
 API activation is explicit and should be declared once per project. This
-example models the reusable parts of a gRPC service like Flock: an h2c Cloud
+example models the reusable parts of a production gRPC service: an h2c Cloud
 Run service with always-allocated CPU, Pub/Sub publishing, Cloud SQL, and an
 OpenTelemetry sidecar.
 
@@ -513,7 +513,7 @@ image, for example `gcloud auth configure-docker us-east1-docker.pkg.dev`.
 import Cloud
 
 @main
-struct FlockInfrastructure: GCPProject {
+struct GCPInfrastructure: GCPProject {
     let projectID = "my-gcp-project"
     let region = GCP.Region.usEast1
 
