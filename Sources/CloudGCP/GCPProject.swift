@@ -13,6 +13,10 @@ extension GCPProject {
     public var providers: [Provider] {
         [.gcp(projectID: projectID, region: region)]
     }
+
+    public var home: any HomeProvider {
+        .gcp(projectID: projectID, location: region)
+    }
 }
 
 extension Context {

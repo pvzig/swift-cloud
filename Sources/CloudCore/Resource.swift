@@ -41,14 +41,18 @@ public struct Resource: Sendable {
     }
 
     func pulumiProjectResources() -> Pulumi.Project.Resources {
+        var dependencyNames = Set<String>()
+        let dependencies = ((options?.dependsOn ?? []) + (dependsOn ?? [])).filter {
+            dependencyNames.insert($0.output.description).inserted
+        }
         return [
             internalName: .init(
                 type: type,
                 properties: properties,
-                options: dependsOn == nil && options == nil
+                options: dependencies.isEmpty && options == nil
                     ? nil
                     : .init(
-                        dependsOn: (dependsOn ?? options?.dependsOn)?.map { $0.output },
+                        dependsOn: dependencies.isEmpty ? nil : dependencies.map { $0.output },
                         protect: options?.protect,
                         provider: options?.provider?.output),
                 get: existingId.map { .init(id: $0) }

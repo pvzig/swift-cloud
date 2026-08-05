@@ -35,6 +35,13 @@ struct SQLDatabaseTests {
 
         let role = try properties(type: "gcp:projects:IAMMember", in: context)
         #expect(role["role"] as? String == "roles/cloudsql.client")
-        #expect(role["member"] as? String == "serviceAccount:${production-backend.email}")
+        #expect(role["member"] as? String == "serviceAccount:${production-backend-service-account.email}")
+
+        let user = try properties(type: "gcp:sql:User", in: context)
+        #expect(user["type"] as? String == "CLOUD_IAM_SERVICE_ACCOUNT")
+        #expect(
+            user["name"] as? String
+                == "${production-main-backend-service-account-iam-username.result}"
+        )
     }
 }

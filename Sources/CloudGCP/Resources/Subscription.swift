@@ -124,6 +124,23 @@ extension GCP.Subscription {
 
 extension GCP.Subscription {
     @discardableResult
+    public func allowConsuming(from serviceAccount: GCP.ServiceAccount) -> Self {
+        _ = Resource(
+            name: "\(resource.chosenName)-subscriber-\(serviceAccount.resource.chosenName)",
+            type: "gcp:pubsub:SubscriptionIAMMember",
+            properties: [
+                "project": resource.context.gcpProjectID,
+                "subscription": name,
+                "role": GCP.IAMRole.pubSubSubscriber.rawValue,
+                "member": serviceAccount.member,
+            ],
+            options: resource.options,
+            context: resource.context
+        )
+        return self
+    }
+
+    @discardableResult
     public func allowServiceAgentToConsume(_ serviceIdentity: GCP.ServiceIdentity) -> Self {
         _ = Resource(
             name: "\(resource.chosenName)-subscriber-service-agent",
@@ -138,5 +155,27 @@ extension GCP.Subscription {
             context: resource.context
         )
         return self
+    }
+}
+
+extension GCP.Subscription: GCPLinkable {
+    public var actions: [String] {
+        [GCP.IAMRole.pubSubSubscriber.rawValue]
+    }
+
+    public var resources: [Output<String>] {
+        [resource.id]
+    }
+
+    public var properties: LinkProperties? {
+        .init(
+            type: "subscription",
+            name: resource.chosenName,
+            properties: ["name": name]
+        )
+    }
+
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        allowConsuming(from: serviceAccount)
     }
 }

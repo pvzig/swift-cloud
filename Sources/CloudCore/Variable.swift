@@ -45,7 +45,8 @@ extension Variable {
     public static func invoke(
         name: String,
         function: String,
-        arguments: [String: Any] = [:]
+        arguments: [String: Any] = [:],
+        context: Context = .current
     ) -> Variable<Outputs> {
         .init(
             name: name,
@@ -54,7 +55,8 @@ extension Variable {
                     "function": function,
                     "arguments": arguments,
                 ]
-            ]
+            ],
+            context: context
         )
     }
 }

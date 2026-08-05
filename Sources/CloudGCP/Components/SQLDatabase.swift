@@ -3,13 +3,14 @@ import CloudCore
 extension GCP {
     /// A Cloud SQL instance and one logical database.
     ///
-    /// Database users are deliberately separate from this component. Swift
-    /// Cloud does not yet expose a secret input primitive suitable for placing
-    /// password material in generated Pulumi YAML.
+    /// Passwordless IAM users can be linked to the database. Password-bearing
+    /// users remain outside this component because Swift Cloud does not expose
+    /// a secret input primitive suitable for generated Pulumi YAML.
     public struct SQLDatabase: GCPComponent {
         public let engine: Engine
         public let instance: Resource
         public let database: Resource
+        public let readReplicas: [Resource]
         public let databaseName: String
 
         public var name: Output<String> {
@@ -31,12 +32,26 @@ extension GCP {
             location: Region? = nil,
             tier: String = "db-custom-1-3840",
             backupsEnabled: Bool = true,
+            pointInTimeRecoveryEnabled: Bool = true,
+            availability: Availability = .zonal,
+            iamAuthenticationEnabled: Bool = true,
+            vpc: VPC? = nil,
+            publicIPv4: Bool? = nil,
+            readReplicaCount: Int = 0,
             deletionProtection: Bool? = nil,
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
+            precondition(readReplicaCount >= 0, "readReplicaCount must not be negative")
+            precondition(
+                readReplicaCount == 0 || backupsEnabled,
+                "read replicas require backups"
+            )
             self.engine = engine
             self.databaseName = databaseName ?? tokenize(context.stage, "app")
+            let ipv4Enabled = publicIPv4 ?? (vpc == nil)
+            let privateDependencies: [any ResourceProvider] =
+                vpc.map { [$0.privateServiceConnection] } ?? []
 
             instance = Resource(
                 name: name,
@@ -48,20 +63,35 @@ extension GCP {
                     "databaseVersion": engine.databaseVersion,
                     "settings": [
                         "tier": tier,
+                        "availabilityType": availability.rawValue,
+                        "databaseFlags": iamAuthenticationEnabled
+                            ? [
+                                [
+                                    "name": engine.iamAuthenticationFlag,
+                                    "value": "on",
+                                ]
+                            ]
+                            : [],
                         "ipConfiguration": [
-                            // Cloud Run's /cloudsql connector still requires
-                            // the instance to have either public or private IP.
-                            // No authorized network is created.
-                            "ipv4Enabled": true
+                            "ipv4Enabled": ipv4Enabled,
+                            "privateNetwork": AnyEncodable(vpc?.network.id),
+                            "enablePrivatePathForGoogleCloudServices": vpc != nil,
                         ],
                         "backupConfiguration": [
-                            "enabled": backupsEnabled
+                            "enabled": backupsEnabled,
+                            "pointInTimeRecoveryEnabled": engine.isPostgres
+                                ? backupsEnabled && pointInTimeRecoveryEnabled
+                                : nil,
+                            "binaryLogEnabled": engine.isMySQL
+                                ? backupsEnabled && pointInTimeRecoveryEnabled
+                                : nil,
                         ],
                     ],
                     "deletionProtection": deletionProtection ?? context.isProduction,
                 ],
                 options: options,
-                context: context
+                context: context,
+                dependsOn: privateDependencies
             )
 
             database = Resource(
@@ -76,6 +106,32 @@ extension GCP {
                 context: context,
                 dependsOn: [instance]
             )
+
+            let primaryInstance = instance
+            readReplicas = (0..<readReplicaCount).map { index in
+                Resource(
+                    name: "\(name)-read-replica-\(index + 1)",
+                    type: "gcp:sql:DatabaseInstance",
+                    properties: [
+                        "project": context.gcpProjectID,
+                        "name": tokenize(context.stage, name, "read", "\(index + 1)"),
+                        "region": (location ?? context.gcpRegion).rawValue,
+                        "databaseVersion": engine.databaseVersion,
+                        "masterInstanceName": primaryInstance.name,
+                        "settings": [
+                            "tier": tier,
+                            "ipConfiguration": [
+                                "ipv4Enabled": ipv4Enabled,
+                                "privateNetwork": AnyEncodable(vpc?.network.id),
+                            ],
+                        ],
+                        "deletionProtection": deletionProtection ?? context.isProduction,
+                    ],
+                    options: options,
+                    context: context,
+                    dependsOn: [primaryInstance] + privateDependencies
+                )
+            }
         }
     }
 }
@@ -85,6 +141,18 @@ extension GCP.SQLDatabase {
         public let databaseVersion: String
         public let port: Int
         public let scheme: String
+
+        fileprivate var isPostgres: Bool {
+            scheme == "postgres"
+        }
+
+        fileprivate var isMySQL: Bool {
+            scheme == "mysql"
+        }
+
+        fileprivate var iamAuthenticationFlag: String {
+            isPostgres ? "cloudsql.iam_authentication" : "cloudsql_iam_authentication"
+        }
 
         public init(databaseVersion: String, port: Int, scheme: String) {
             self.databaseVersion = databaseVersion
@@ -116,6 +184,11 @@ extension GCP.SQLDatabase {
             scheme: "postgres"
         )
     }
+
+    public enum Availability: String, Sendable {
+        case zonal = "ZONAL"
+        case regional = "REGIONAL"
+    }
 }
 
 extension GCP.SQLDatabase {
@@ -123,6 +196,61 @@ extension GCP.SQLDatabase {
     @discardableResult
     public func allowConnections(from serviceAccount: GCP.ServiceAccount) -> Self {
         serviceAccount.grantProjectRole(.cloudSQLClient)
+        serviceAccount.grantProjectRole(.cloudSQLInstanceUser)
+        _ = createIAMUser(for: serviceAccount)
         return self
+    }
+
+    @discardableResult
+    public func createIAMUser(for serviceAccount: GCP.ServiceAccount) -> Resource {
+        let username = Strings.trimSuffix(
+            serviceAccount.email,
+            suffix: ".gserviceaccount.com",
+            name: "\(instance.chosenName)-\(serviceAccount.resource.chosenName)-iam-username",
+            context: instance.context
+        ).result
+        return Resource(
+            name: "\(instance.chosenName)-iam-user-\(serviceAccount.resource.chosenName)",
+            type: "gcp:sql:User",
+            properties: [
+                "project": instance.context.gcpProjectID,
+                "name": username,
+                "instance": instance.name,
+                "type": "CLOUD_IAM_SERVICE_ACCOUNT",
+            ],
+            options: instance.options,
+            context: instance.context,
+            dependsOn: [instance, serviceAccount]
+        )
+    }
+}
+
+extension GCP.SQLDatabase: GCPLinkable {
+    public var actions: [String] {
+        [
+            GCP.IAMRole.cloudSQLClient.rawValue,
+            GCP.IAMRole.cloudSQLInstanceUser.rawValue,
+        ]
+    }
+
+    public var resources: [Output<String>] {
+        [instance.id]
+    }
+
+    public var properties: LinkProperties? {
+        .init(
+            type: "sqldb",
+            name: instance.chosenName,
+            properties: [
+                "connectionName": connectionName,
+                "databaseName": databaseName,
+                "port": "\(port)",
+                "scheme": engine.scheme,
+            ]
+        )
+    }
+
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        allowConnections(from: serviceAccount)
     }
 }

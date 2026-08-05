@@ -14,6 +14,7 @@ extension GCP {
 
 extension GCP.IAMRole {
     public static let cloudSQLClient: Self = "roles/cloudsql.client"
+    public static let cloudSQLInstanceUser: Self = "roles/cloudsql.instanceUser"
     public static let loggingWriter: Self = "roles/logging.logWriter"
     public static let monitoringMetricWriter: Self = "roles/monitoring.metricWriter"
     public static let pubSubPublisher: Self = "roles/pubsub.publisher"
@@ -23,4 +24,5 @@ extension GCP.IAMRole {
     public static let serviceAccountTokenCreator: Self = "roles/iam.serviceAccountTokenCreator"
     public static let serviceController: Self = "roles/servicemanagement.serviceController"
     public static let traceAgent: Self = "roles/cloudtrace.agent"
+    public static let storageObjectUser: Self = "roles/storage.objectUser"
 }

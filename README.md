@@ -501,13 +501,15 @@ return Outputs([
 
 GCP support follows the same provider-specific component model as AWS. Google
 API activation is explicit and should be declared once per project. This
-example models the reusable parts of a production gRPC service: an h2c Cloud
-Run service with always-allocated CPU, Pub/Sub publishing, Cloud SQL, and an
-OpenTelemetry sidecar.
+example models a production gRPC service with private networking, linked GCP
+resources, scheduled work, managed HTTPS, and an OpenTelemetry sidecar.
 
 Authenticate Pulumi with [Application Default Credentials](https://cloud.google.com/docs/authentication/provide-credentials-adc)
 and configure Docker for each Artifact Registry hostname before deploying an
 image, for example `gcloud auth configure-docker us-east1-docker.pkg.dev`.
+`GCPProject` stores its passphrase and local Pulumi snapshot in a
+project-specific Cloud Storage bucket through the authenticated `gcloud storage`
+command. Override `home` with `.local()` only when local-only state is intentional.
 
 ```swift
 import Cloud
@@ -520,10 +522,16 @@ struct GCPInfrastructure: GCPProject {
     func build() async throws -> Outputs {
         let apis: [any ResourceProvider] = [
             GCP.ProjectService(.artifactRegistry),
+            GCP.ProjectService(.cloudDNS),
             GCP.ProjectService(.cloudRun),
+            GCP.ProjectService(.cloudScheduler),
             GCP.ProjectService(.cloudSQL),
+            GCP.ProjectService(.compute),
             GCP.ProjectService(.pubSub),
+            GCP.ProjectService(.redis),
             GCP.ProjectService(.secretManager),
+            GCP.ProjectService(.serviceNetworking),
+            GCP.ProjectService(.storage),
         ]
         let options = Resource.Options.dependsOn(apis)
 
@@ -545,16 +553,30 @@ struct GCPInfrastructure: GCPProject {
             repository: repository
         )
 
+        let vpc = GCP.VPC("main", options: options)
+        let assets = GCP.Bucket(
+            "assets",
+            versioningEnabled: true,
+            options: options
+        )
+        let apiKey = GCP.Secret("api-key", options: options)
+
         let database = GCP.SQLDatabase(
             "main",
             engine: .postgres16,
             databaseName: "app",
+            availability: .regional,
+            vpc: vpc,
+            readReplicaCount: 1,
             options: options
         )
-        .allowConnections(from: runtimeIdentity)
-
+        let cache = GCP.Cache(
+            "cache",
+            vpc: vpc,
+            tier: .highAvailability,
+            options: options
+        )
         let events = GCP.Topic("events", options: options)
-            .allowPublishing(from: runtimeIdentity)
 
         let service = GCP.CloudRunService(
             "backend",
@@ -563,11 +585,14 @@ struct GCPInfrastructure: GCPProject {
             protocol: .http2,
             cpuAllocation: .always,
             scaling: .init(minimumInstances: 1, maximumInstances: 10),
+            ingress: .internalLoadBalancer,
+            vpc: vpc,
             environment: [
                 "GCP_PROJECT_ID": projectID,
-                "PUBSUB_TOPIC": events.id,
-                "CLOUD_SQL_INSTANCE_CONNECTION_NAME": database.connectionName,
                 "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
+            ],
+            secretEnvironment: [
+                .init("API_KEY", secret: apiKey.secretID)
             ],
             applicationDependencies: ["collector"],
             applicationVolumeMounts: [
@@ -595,10 +620,30 @@ struct GCPInfrastructure: GCPProject {
                 ),
             ],
             options: options
+        ).link([assets, apiKey, database, cache, events])
+
+        _ = GCP.SchedulerJob(
+            "backend-tick",
+            schedule: "*/5 * * * *",
+            target: .cloudRun(service, serviceAccount: runtimeIdentity),
+            options: options
+        )
+
+        let dns = GCP.DNS(
+            "example-zone",
+            zoneName: "example.com",
+            options: options
+        )
+        let edge = GCP.HTTPSLoadBalancer(
+            "backend-edge",
+            service: service,
+            domainName: .init(hostname: "api.example.com", dns: dns),
+            cdn: .enabled(),
+            options: options
         )
 
         return Outputs([
-            "serviceURL": service.url,
+            "serviceURL": edge.url,
             "topic": events.id,
             "cloudSQLConnectionName": database.connectionName,
         ])
@@ -606,16 +651,19 @@ struct GCPInfrastructure: GCPProject {
 }
 ```
 
-The example assumes `otel-collector-config` already exists in Secret Manager.
+The example assumes payload versions for `api-key` and
+`otel-collector-config` are populated outside Swift Cloud. It also assumes the
+domain registrar delegates `example.com` to the generated Cloud DNS zone.
 `GCP.Subscription` supports pull delivery or an OIDC-authenticated push
 endpoint, retry backoff, and dead-letter topics. For authenticated push, grant
 the Pub/Sub service identity `roles/iam.serviceAccountTokenCreator` on the push
 service account and grant that push account invocation access to the receiving
 Cloud Run service. Cloud Endpoints/ESPv2 configuration remains an explicit
 application deployment concern and can run as a second `GCP.CloudRunService`.
-`GCP.SQLDatabase` deliberately omits password-bearing database users until the
-framework has a secret input primitive; create those at the application
-boundary without placing plaintext credentials in generated Pulumi YAML.
+Linking `GCP.SQLDatabase` creates a passwordless Cloud SQL IAM service-account
+user. Password-bearing users remain outside the framework until secret inputs
+can be represented without placing plaintext credentials in generated Pulumi
+YAML.
 
 ### Linking
 
@@ -623,14 +671,16 @@ You can link resources together to provide the necessary permissions to access
 each other. This is more secure than sharing access key ids and secrets in
 environment variables.
 
-For example you can link an S3 bucket to a Lambda function:
+For example, you can link an S3 bucket to a Lambda function or GCP resources to
+a Cloud Run service:
 
 ```swift
 myFunction.link(bucket)
+cloudRunService.link([bucket, secret, database, cache, topic])
 ```
 
-This allows the lambda function to access the bucket without needing to share
-access keys.
+Linking grants provider-native permissions and injects stable environment
+metadata without sharing access keys.
 
 #### Using linked resources
 
@@ -662,3 +712,14 @@ Here is a list of all the linked resources:
 | AWS SQL Database    | `SQLDB_<NAME>_USERNAME`      |
 | AWS SQL Database    | `SQLDB_<NAME>_PASSWORD`      |
 | AWS SQL Database    | `SQLDB_<NAME>_URL`           |
+| GCP Cloud Storage   | `BUCKET_<NAME>_NAME`         |
+| GCP Cloud Storage   | `BUCKET_<NAME>_URL`          |
+| GCP Secret Manager  | `SECRET_<NAME>_NAME`         |
+| GCP Pub/Sub Topic   | `TOPIC_<NAME>_NAME`          |
+| GCP Pub/Sub Topic   | `TOPIC_<NAME>_ID`            |
+| GCP Subscription    | `SUBSCRIPTION_<NAME>_NAME`   |
+| GCP Cloud SQL       | `SQLDB_<NAME>_CONNECTION_NAME` |
+| GCP Cloud SQL       | `SQLDB_<NAME>_DATABASE_NAME` |
+| GCP Memorystore     | `CACHE_<NAME>_HOSTNAME`      |
+| GCP Memorystore     | `CACHE_<NAME>_PORT`          |
+| GCP Memorystore     | `CACHE_<NAME>_URL`           |

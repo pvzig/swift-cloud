@@ -26,7 +26,7 @@ extension GCP {
             )
 
             resource = Resource(
-                name: name,
+                name: "\(name)-service-account",
                 type: "gcp:serviceaccount:Account",
                 properties: [
                     "project": context.gcpProjectID,

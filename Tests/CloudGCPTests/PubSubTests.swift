@@ -41,7 +41,7 @@ struct PubSubTests {
         #expect(push["pushEndpoint"] as? String == "${testing-gateway.uri}/v1/events:push")
 
         let token = try #require(push["oidcToken"] as? [String: Any])
-        #expect(token["serviceAccountEmail"] as? String == "${testing-push.email}")
+        #expect(token["serviceAccountEmail"] as? String == "${testing-push-service-account.email}")
         #expect(token["audience"] as? String == "${testing-gateway.uri}")
 
         let retry = try #require(subscriptionProperties["retryPolicy"] as? [String: Any])

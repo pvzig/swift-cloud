@@ -4,6 +4,7 @@ extension GCP {
     public struct CloudRunService: GCPComponent {
         public let service: Resource
         public let serviceAccount: ServiceAccount?
+        public let environment: Environment
 
         public var name: Output<String> {
             service.name
@@ -27,6 +28,8 @@ extension GCP {
             timeout: Duration = .seconds(300),
             scaling: Scaling = .init(maximumInstances: 10),
             ingress: Ingress = .all,
+            vpc: VPC? = nil,
+            vpcEgress: VPCEgress = .privateRangesOnly,
             environment: [String: any Input<String>] = [:],
             secretEnvironment: [SecretEnvironmentVariable] = [],
             arguments: [String] = [],
@@ -54,9 +57,8 @@ extension GCP {
             )
 
             self.serviceAccount = serviceAccount
-
-            var applicationEnvironment = environment
-            applicationEnvironment["PORT"] = "\(port)"
+            self.environment = Environment(environment, shape: .nameValueList, context: context)
+            self.environment["PORT"] = "\(port)"
 
             let applicationContainer = Self.containerProperties(
                 name: "app",
@@ -66,8 +68,12 @@ extension GCP {
                 cpu: cpu,
                 memory: memory,
                 cpuAllocation: cpuAllocation,
-                environment: applicationEnvironment,
-                secretEnvironment: secretEnvironment,
+                environment: AnyEncodable(
+                    CloudRunEnvironment(
+                        environment: self.environment,
+                        secrets: secretEnvironment
+                    )
+                ),
                 arguments: arguments,
                 dependencies: applicationDependencies,
                 volumeMounts: applicationVolumeMounts,
@@ -95,6 +101,19 @@ extension GCP {
                         "timeout": "\(timeout.components.seconds)s",
                         "containers": [applicationContainer] + sidecars.map(\.properties),
                         "volumes": volumes.map(\.properties),
+                        "vpcAccess": AnyEncodable(
+                            vpc.map {
+                                [
+                                    "egress": vpcEgress.rawValue,
+                                    "networkInterfaces": [
+                                        [
+                                            "network": $0.network.id,
+                                            "subnetwork": $0.subnetwork.id,
+                                        ]
+                                    ],
+                                ]
+                            }
+                        ),
                     ],
                     "traffics": [
                         [
@@ -138,6 +157,11 @@ extension GCP.CloudRunService {
         case all = "INGRESS_TRAFFIC_ALL"
         case internalOnly = "INGRESS_TRAFFIC_INTERNAL_ONLY"
         case internalLoadBalancer = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
+    }
+
+    public enum VPCEgress: String, Sendable {
+        case allTraffic = "ALL_TRAFFIC"
+        case privateRangesOnly = "PRIVATE_RANGES_ONLY"
     }
 
     public struct Scaling: Sendable {
@@ -317,8 +341,10 @@ extension GCP.CloudRunService {
                 cpu: cpu,
                 memory: memory,
                 cpuAllocation: cpuAllocation,
-                environment: environment,
-                secretEnvironment: secretEnvironment,
+                environment: GCP.CloudRunService.environmentProperties(
+                    environment,
+                    secrets: secretEnvironment
+                ),
                 arguments: arguments,
                 dependencies: dependencies,
                 volumeMounts: volumeMounts,
@@ -374,24 +400,13 @@ extension GCP.CloudRunService {
         cpu: Int,
         memory: String,
         cpuAllocation: CPUAllocation,
-        environment: [String: any Input<String>],
-        secretEnvironment: [SecretEnvironmentVariable],
+        environment: AnyEncodable,
         arguments: [String],
         dependencies: [String],
         volumeMounts: [VolumeMount],
         startupProbe: Probe?,
         livenessProbe: Probe?
     ) -> AnyEncodable {
-        let literalEnvironment =
-            environment
-            .sorted { $0.key < $1.key }
-            .map { key, value in
-                AnyEncodable([
-                    "name": tokenize(key, separator: "_").uppercased(),
-                    "value": value,
-                ])
-            }
-
         return [
             "name": name,
             "image": image,
@@ -410,10 +425,51 @@ extension GCP.CloudRunService {
                     "memory": memory,
                 ],
             ],
-            "envs": literalEnvironment + secretEnvironment.map(\.properties),
+            "envs": environment,
             "volumeMounts": volumeMounts.map(\.properties),
             "startupProbe": startupProbe?.properties,
             "livenessProbe": livenessProbe?.properties,
         ]
+    }
+
+    fileprivate static func environmentProperties(
+        _ environment: [String: any Input<String>],
+        secrets: [SecretEnvironmentVariable]
+    ) -> AnyEncodable {
+        let literalEnvironment =
+            environment
+            .sorted { $0.key < $1.key }
+            .map { key, value in
+                AnyEncodable([
+                    "name": tokenize(key, separator: "_").uppercased(),
+                    "value": value,
+                ])
+            }
+        return AnyEncodable(literalEnvironment + secrets.map(\.properties))
+    }
+}
+
+private struct CloudRunEnvironment: Encodable, Sendable {
+    let environment: Environment
+    let secrets: [GCP.CloudRunService.SecretEnvironmentVariable]
+
+    func encode(to encoder: Encoder) throws {
+        try GCP.CloudRunService.environmentProperties(
+            environment.values,
+            secrets: secrets
+        ).encode(to: encoder)
+    }
+}
+
+extension GCP.CloudRunService: EnvironmentProvider, GCPRoleProvider {
+    public var gcpServiceAccount: GCP.ServiceAccount {
+        guard let serviceAccount else {
+            preconditionFailure("Linking a Cloud Run service requires an explicit service account")
+        }
+        return serviceAccount
+    }
+
+    public var gcpContext: Context {
+        service.context
     }
 }

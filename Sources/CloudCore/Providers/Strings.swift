@@ -139,15 +139,18 @@ extension Strings {
 
     public static func trimSuffix(
         _ input: any Input<String>,
-        suffix: any Input<String>
+        suffix: any Input<String>,
+        name: String? = nil,
+        context: Context = .current
     ) -> Output<Trimmed> {
         let variable = Variable<Trimmed>.invoke(
-            name: "\(input)-\(suffix)-trimsuffix",
+            name: name ?? "\(input)-\(suffix)-trimsuffix",
             function: "str:trimSuffix",
             arguments: [
                 "suffix": suffix,
                 "string": input,
-            ]
+            ],
+            context: context
         )
         return variable.output
     }

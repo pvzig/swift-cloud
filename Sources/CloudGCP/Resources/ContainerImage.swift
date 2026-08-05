@@ -35,7 +35,7 @@ extension GCP {
             let imageTag = "\(repository.registryURI)/\(imageName):\(context.stage)"
 
             resource = Resource(
-                name: name,
+                name: "\(name)-image",
                 type: "docker-build:Image",
                 properties: [
                     "push": true,

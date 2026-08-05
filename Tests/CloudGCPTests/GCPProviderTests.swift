@@ -16,6 +16,7 @@ struct GCPProviderTests {
         #expect(provider.configuration["region"] == "us-east1")
         #expect(provider.dependencies.map(\.name) == ["docker-build"])
         #expect(provider.dependencies.map(\.version) == ["0.0.22"])
+        #expect(project.home is GCP.Home)
     }
 
     @Test("Project service owns explicit API activation")

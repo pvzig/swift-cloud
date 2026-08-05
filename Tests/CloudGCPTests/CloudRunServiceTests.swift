@@ -55,7 +55,7 @@ struct CloudRunServiceTests {
         #expect(scaling["maxInstanceCount"] as? Int == 4)
 
         let template = try #require(serviceProperties["template"] as? [String: Any])
-        #expect(template["serviceAccount"] as? String == "${testing-backend.email}")
+        #expect(template["serviceAccount"] as? String == "${testing-backend-service-account.email}")
         #expect(template["maxInstanceRequestConcurrency"] as? Int == 40)
 
         let containers = try #require(template["containers"] as? [[String: Any]])
@@ -99,7 +99,7 @@ struct CloudRunServiceTests {
             context: context
         )
 
-        #expect(image.reference.description == "${testing-backend.ref}")
+        #expect(image.reference.description == "${testing-backend-image.ref}")
 
         let imageResource = try resource(type: "docker-build:Image", in: context)
         #expect(imageResource.dependsOn?.count == 1)

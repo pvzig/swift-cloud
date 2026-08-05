@@ -80,3 +80,28 @@ extension GCP.Topic {
         return self
     }
 }
+
+extension GCP.Topic: GCPLinkable {
+    public var actions: [String] {
+        [GCP.IAMRole.pubSubPublisher.rawValue]
+    }
+
+    public var resources: [Output<String>] {
+        [topic.id]
+    }
+
+    public var properties: LinkProperties? {
+        .init(
+            type: "topic",
+            name: topic.chosenName,
+            properties: [
+                "name": name,
+                "id": id,
+            ]
+        )
+    }
+
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        allowPublishing(from: serviceAccount)
+    }
+}

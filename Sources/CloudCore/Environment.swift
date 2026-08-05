@@ -31,6 +31,15 @@ public final class Environment: Encodable, @unchecked Sendable {
         set { queue.sync { _store = newValue } }
     }
 
+    /// A point-in-time view of the normalized environment values.
+    ///
+    /// Components that compose literal and provider-native secret values can
+    /// read this at encoding time so links added after initialization are
+    /// included in the generated deployment definition.
+    public var values: [String: any Input<String>] {
+        store
+    }
+
     public init(
         _ initial: [String: any Input<String>]? = nil,
         shape: EncodingShape,
