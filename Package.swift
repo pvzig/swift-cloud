@@ -14,6 +14,7 @@ let package = Package(
         .library(name: "CloudCore", targets: ["CloudCore"]),
         .library(name: "CloudDigitalOcean", targets: ["CloudDigitalOcean"]),
         .library(name: "CloudFastly", targets: ["CloudFastly"]),
+        .library(name: "CloudGCP", targets: ["CloudGCP"]),
         .library(name: "CloudSDK", targets: ["CloudSDK"]),
         .library(name: "CloudVercel", targets: ["CloudVercel"]),
     ],
@@ -35,6 +36,7 @@ let package = Package(
                 "CloudCore",
                 "CloudDigitalOcean",
                 "CloudFastly",
+                "CloudGCP",
                 "CloudVercel",
             ]
         ),
@@ -67,6 +69,10 @@ let package = Package(
             dependencies: ["CloudCore"]
         ),
         .target(
+            name: "CloudGCP",
+            dependencies: ["CloudCore"]
+        ),
+        .target(
             name: "CloudSDK",
             dependencies: []
         ),
@@ -77,6 +83,10 @@ let package = Package(
         .testTarget(
             name: "CloudCoreTests",
             dependencies: ["CloudCore"]
+        ),
+        .testTarget(
+            name: "CloudGCPTests",
+            dependencies: ["CloudCore", "CloudGCP"]
         ),
     ]
 )

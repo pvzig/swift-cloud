@@ -3,4 +3,5 @@
 @_exported import CloudCore
 @_exported import CloudDigitalOcean
 @_exported import CloudFastly
+@_exported import CloudGCP
 @_exported import CloudVercel

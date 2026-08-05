@@ -8,4 +8,5 @@ builder:
         - CloudCloudflare
         - CloudDigitalOcean
         - CloudFastly
+        - CloudGCP
         - CloudVercel

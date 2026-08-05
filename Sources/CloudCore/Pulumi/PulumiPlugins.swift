@@ -45,11 +45,25 @@ extension Pulumi.Plugin {
         repo: "pulumi/pulumi-digitalocean"
     )
 
+    // https://github.com/pulumi/pulumi-docker-build
+    public static let dockerBuild = Pulumi.Plugin(
+        name: "docker-build",
+        version: "0.0.22",
+        repo: "pulumi/pulumi-docker-build"
+    )
+
     // https://github.com/pulumi/pulumi-fastly
     public static let fastly = Pulumi.Plugin(
         name: "fastly",
         version: "11.2.0",
         repo: "pulumi/pulumi-fastly"
+    )
+
+    // https://github.com/pulumi/pulumi-gcp
+    public static let gcp = Pulumi.Plugin(
+        name: "gcp",
+        version: "9.33.0",
+        repo: "pulumi/pulumi-gcp"
     )
 
     // https://github.com/pulumi/pulumi-random

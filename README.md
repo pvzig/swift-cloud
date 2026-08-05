@@ -85,6 +85,20 @@ You can also use the AWS CLI to configure your credentials:
 aws configure
 ```
 
+#### Setup GCP
+
+Google Cloud resources use Application Default Credentials. Authenticate the
+Pulumi GCP provider, then configure Docker for the Artifact Registry hostname in
+the region you deploy to:
+
+```bash
+gcloud auth application-default login
+gcloud auth configure-docker us-east1-docker.pkg.dev
+```
+
+The deploying identity needs permission to activate the APIs and create the
+resources declared by the project.
+
 ### Add to your project
 
 ```swift
@@ -482,6 +496,126 @@ return Outputs([
     "url": server.url
 ])
 ```
+
+### GCP
+
+GCP support follows the same provider-specific component model as AWS. Google
+API activation is explicit and should be declared once per project. This
+example models the reusable parts of a gRPC service like Flock: an h2c Cloud
+Run service with always-allocated CPU, Pub/Sub publishing, Cloud SQL, and an
+OpenTelemetry sidecar.
+
+Authenticate Pulumi with [Application Default Credentials](https://cloud.google.com/docs/authentication/provide-credentials-adc)
+and configure Docker for each Artifact Registry hostname before deploying an
+image, for example `gcloud auth configure-docker us-east1-docker.pkg.dev`.
+
+```swift
+import Cloud
+
+@main
+struct FlockInfrastructure: GCPProject {
+    let projectID = "my-gcp-project"
+    let region = GCP.Region.usEast1
+
+    func build() async throws -> Outputs {
+        let apis: [any ResourceProvider] = [
+            GCP.ProjectService(.artifactRegistry),
+            GCP.ProjectService(.cloudRun),
+            GCP.ProjectService(.cloudSQL),
+            GCP.ProjectService(.pubSub),
+            GCP.ProjectService(.secretManager),
+        ]
+        let options = Resource.Options.dependsOn(apis)
+
+        let runtimeIdentity = GCP.ServiceAccount(
+            "backend",
+            options: options
+        )
+        .grantProjectRole(.loggingWriter)
+        .grantProjectRole(.monitoringMetricWriter)
+        .grantProjectRole(.traceAgent)
+
+        let repository = GCP.ArtifactRegistry(
+            "services",
+            options: options
+        )
+        let image = GCP.ContainerImage(
+            "backend",
+            targetName: "ExampleService",
+            repository: repository
+        )
+
+        let database = GCP.SQLDatabase(
+            "main",
+            engine: .postgres16,
+            databaseName: "app",
+            options: options
+        )
+        .allowConnections(from: runtimeIdentity)
+
+        let events = GCP.Topic("events", options: options)
+            .allowPublishing(from: runtimeIdentity)
+
+        let service = GCP.CloudRunService(
+            "backend",
+            image: image.reference,
+            serviceAccount: runtimeIdentity,
+            protocol: .http2,
+            cpuAllocation: .always,
+            scaling: .init(minimumInstances: 1, maximumInstances: 10),
+            environment: [
+                "GCP_PROJECT_ID": projectID,
+                "PUBSUB_TOPIC": events.id,
+                "CLOUD_SQL_INSTANCE_CONNECTION_NAME": database.connectionName,
+                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
+            ],
+            applicationDependencies: ["collector"],
+            applicationVolumeMounts: [
+                .init("cloudsql", path: "/cloudsql")
+            ],
+            sidecars: [
+                .init(
+                    "collector",
+                    image: "us-docker.pkg.dev/cloud-ops-agents-artifacts/google-cloud-opentelemetry-collector/otelcol-google:0.143.0",
+                    cpuAllocation: .always,
+                    arguments: ["--config=/etc/otelcol-google/config.yaml"],
+                    volumeMounts: [
+                        .init("otel-config", path: "/etc/otelcol-google/")
+                    ],
+                    startupProbe: .http(path: "/", port: 13133),
+                    livenessProbe: .http(path: "/", port: 13133)
+                )
+            ],
+            volumes: [
+                .cloudSQL(name: "cloudsql", instances: [database.connectionName]),
+                .secret(
+                    name: "otel-config",
+                    secret: "otel-collector-config",
+                    items: [.init(path: "config.yaml")]
+                ),
+            ],
+            options: options
+        )
+
+        return Outputs([
+            "serviceURL": service.url,
+            "topic": events.id,
+            "cloudSQLConnectionName": database.connectionName,
+        ])
+    }
+}
+```
+
+The example assumes `otel-collector-config` already exists in Secret Manager.
+`GCP.Subscription` supports pull delivery or an OIDC-authenticated push
+endpoint, retry backoff, and dead-letter topics. For authenticated push, grant
+the Pub/Sub service identity `roles/iam.serviceAccountTokenCreator` on the push
+service account and grant that push account invocation access to the receiving
+Cloud Run service. Cloud Endpoints/ESPv2 configuration remains an explicit
+application deployment concern and can run as a second `GCP.CloudRunService`.
+`GCP.SQLDatabase` deliberately omits password-bearing database users until the
+framework has a secret input primitive; create those at the application
+boundary without placing plaintext credentials in generated Pulumi YAML.
 
 ### Linking
 
