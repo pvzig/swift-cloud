@@ -13,8 +13,11 @@ extension GCP {
 }
 
 extension GCP.IAMRole {
+    public static let cloudTasksEnqueuer: Self = "roles/cloudtasks.enqueuer"
     public static let cloudSQLClient: Self = "roles/cloudsql.client"
     public static let cloudSQLInstanceUser: Self = "roles/cloudsql.instanceUser"
+    public static let datastoreUser: Self = "roles/datastore.user"
+    public static let eventarcEventReceiver: Self = "roles/eventarc.eventReceiver"
     public static let loggingWriter: Self = "roles/logging.logWriter"
     public static let monitoringMetricWriter: Self = "roles/monitoring.metricWriter"
     public static let pubSubPublisher: Self = "roles/pubsub.publisher"
@@ -23,6 +26,9 @@ extension GCP.IAMRole {
     public static let secretAccessor: Self = "roles/secretmanager.secretAccessor"
     public static let serviceAccountTokenCreator: Self = "roles/iam.serviceAccountTokenCreator"
     public static let serviceController: Self = "roles/servicemanagement.serviceController"
+    public static let spannerDatabaseUser: Self = "roles/spanner.databaseUser"
     public static let traceAgent: Self = "roles/cloudtrace.agent"
     public static let storageObjectUser: Self = "roles/storage.objectUser"
+    public static let storageObjectViewer: Self = "roles/storage.objectViewer"
+    public static let workflowsInvoker: Self = "roles/workflows.invoker"
 }

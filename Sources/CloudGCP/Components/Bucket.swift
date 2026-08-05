@@ -17,6 +17,7 @@ extension GCP {
             location: Region? = nil,
             storageClass: StorageClass = .standard,
             versioningEnabled: Bool = false,
+            publicReadAccess: Bool = false,
             forceDestroy: Bool = false,
             options: Resource.Options? = nil,
             context: Context = .current
@@ -35,13 +36,27 @@ extension GCP {
                     "location": (location ?? context.gcpRegion).rawValue,
                     "storageClass": storageClass.rawValue,
                     "uniformBucketLevelAccess": true,
-                    "publicAccessPrevention": "enforced",
+                    "publicAccessPrevention": publicReadAccess ? "inherited" : "enforced",
                     "versioning": ["enabled": versioningEnabled],
                     "forceDestroy": forceDestroy,
                 ],
                 options: options,
                 context: context
             )
+
+            if publicReadAccess {
+                _ = Resource(
+                    name: "\(name)-public-object-viewer",
+                    type: "gcp:storage:BucketIAMMember",
+                    properties: [
+                        "bucket": bucket.name,
+                        "role": GCP.IAMRole.storageObjectViewer.rawValue,
+                        "member": "allUsers",
+                    ],
+                    options: options,
+                    context: context
+                )
+            }
         }
     }
 }

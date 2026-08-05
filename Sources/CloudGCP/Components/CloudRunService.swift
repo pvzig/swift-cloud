@@ -191,7 +191,7 @@ extension GCP.CloudRunService {
             self.version = version
         }
 
-        fileprivate var properties: AnyEncodable {
+        var properties: AnyEncodable {
             [
                 "name": Self.environmentKey(name),
                 "valueSource": [
@@ -219,7 +219,7 @@ extension GCP.CloudRunService {
             self.path = path
         }
 
-        fileprivate var properties: AnyEncodable {
+        var properties: AnyEncodable {
             [
                 "name": name,
                 "mountPath": path,
@@ -236,7 +236,7 @@ extension GCP.CloudRunService {
             self.path = path
         }
 
-        fileprivate var properties: AnyEncodable {
+        var properties: AnyEncodable {
             [
                 "version": version,
                 "path": path,
@@ -248,7 +248,7 @@ extension GCP.CloudRunService {
         case cloudSQL(name: String, instances: [any Input<String>])
         case secret(name: String, secret: any Input<String>, items: [SecretVolumeItem])
 
-        fileprivate var properties: AnyEncodable {
+        var properties: AnyEncodable {
             switch self {
             case .cloudSQL(let name, let instances):
                 [
@@ -432,7 +432,7 @@ extension GCP.CloudRunService {
         ]
     }
 
-    fileprivate static func environmentProperties(
+    static func environmentProperties(
         _ environment: [String: any Input<String>],
         secrets: [SecretEnvironmentVariable]
     ) -> AnyEncodable {
@@ -449,7 +449,7 @@ extension GCP.CloudRunService {
     }
 }
 
-private struct CloudRunEnvironment: Encodable, Sendable {
+struct CloudRunEnvironment: Encodable, Sendable {
     let environment: Environment
     let secrets: [GCP.CloudRunService.SecretEnvironmentVariable]
 

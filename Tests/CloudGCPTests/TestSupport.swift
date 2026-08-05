@@ -57,3 +57,17 @@ func properties(
         sourceLocation: sourceLocation
     )
 }
+
+func variableDefinitions(
+    in context: Context,
+    sourceLocation: SourceLocation = #_sourceLocation
+) throws -> [String: Any] {
+    let definitions = context.store.variables.reduce(into: Pulumi.Project.Variables()) {
+        $0.merge($1.pulumiProjectVariables()) { _, new in new }
+    }
+    let encoded = try JSONEncoder().encode(definitions)
+    return try #require(
+        JSONSerialization.jsonObject(with: encoded) as? [String: Any],
+        sourceLocation: sourceLocation
+    )
+}

@@ -45,8 +45,18 @@ extension GCP.ServiceAccount {
     /// Grants this identity a project-scoped role.
     @discardableResult
     public func grantProjectRole(_ role: GCP.IAMRole) -> Self {
+        let roleName = "\(resource.chosenName)-\(tokenize(role.rawValue))-project-role"
+        guard
+            resource.context.store.containsResource(
+                type: "gcp:projects:IAMMember",
+                chosenName: roleName
+            ) == false
+        else {
+            return self
+        }
+
         _ = Resource(
-            name: "\(resource.chosenName)-\(tokenize(role.rawValue))-project-role",
+            name: roleName,
             type: "gcp:projects:IAMMember",
             properties: [
                 "project": resource.context.gcpProjectID,

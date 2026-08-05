@@ -66,6 +66,14 @@ extension GCP.SchedulerJob {
             headers: [String: String],
             bodyBase64: String?
         )
+        case oauthHTTP(
+            uri: any Input<String>,
+            method: HTTPMethod,
+            serviceAccount: GCP.ServiceAccount,
+            scope: String,
+            headers: [String: String],
+            bodyBase64: String?
+        )
         case pubSub(topic: GCP.Topic, dataBase64: String?, attributes: [String: String])
 
         public static func cloudRun(
@@ -87,6 +95,22 @@ extension GCP.SchedulerJob {
             )
         }
 
+        public static func cloudRunJob(
+            _ job: GCP.CloudRunJob,
+            serviceAccount: GCP.ServiceAccount,
+            bodyBase64: String? = nil
+        ) -> Self {
+            job.allowExecution(from: serviceAccount)
+            return .oauthHTTP(
+                uri: job.runURI,
+                method: .post,
+                serviceAccount: serviceAccount,
+                scope: "https://www.googleapis.com/auth/cloud-platform",
+                headers: ["Content-Type": "application/json"],
+                bodyBase64: bodyBase64
+            )
+        }
+
         fileprivate var httpProperties: AnyEncodable? {
             switch self {
             case .http(let uri, let method, let serviceAccount, let audience, let headers, let bodyBase64):
@@ -102,6 +126,17 @@ extension GCP.SchedulerJob {
                         ]
                     },
                 ]
+            case .oauthHTTP(let uri, let method, let serviceAccount, let scope, let headers, let bodyBase64):
+                [
+                    "uri": uri,
+                    "httpMethod": method.rawValue,
+                    "headers": headers,
+                    "body": bodyBase64,
+                    "oauthToken": [
+                        "serviceAccountEmail": serviceAccount.email,
+                        "scope": scope,
+                    ],
+                ]
             case .pubSub:
                 nil
             }
@@ -109,7 +144,7 @@ extension GCP.SchedulerJob {
 
         fileprivate var pubSubProperties: AnyEncodable? {
             switch self {
-            case .http:
+            case .http, .oauthHTTP:
                 nil
             case .pubSub(let topic, let dataBase64, let attributes):
                 [
@@ -133,6 +168,13 @@ extension GCP.SchedulerJob {
                     serviceAccount != nil || audience == nil,
                     "an OIDC audience requires a service account"
                 )
+            case .oauthHTTP(_, let method, _, _, _, let bodyBase64):
+                if bodyBase64 != nil {
+                    precondition(
+                        [.patch, .post, .put].contains(method),
+                        "HTTP bodies require PATCH, POST, or PUT"
+                    )
+                }
             case .pubSub(_, let dataBase64, let attributes):
                 precondition(
                     dataBase64?.isEmpty == false || attributes.isEmpty == false,

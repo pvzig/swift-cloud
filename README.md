@@ -557,6 +557,7 @@ struct GCPInfrastructure: GCPProject {
         let assets = GCP.Bucket(
             "assets",
             versioningEnabled: true,
+            publicReadAccess: true,
             options: options
         )
         let apiKey = GCP.Secret("api-key", options: options)
@@ -634,11 +635,13 @@ struct GCPInfrastructure: GCPProject {
             zoneName: "example.com",
             options: options
         )
-        let edge = GCP.HTTPSLoadBalancer(
+        let edge = GCP.CDN(
             "backend-edge",
-            service: service,
+            origins: [
+                .cloudRun(service, path: "*"),
+                .bucket(assets, path: "/assets/*"),
+            ],
             domainName: .init(hostname: "api.example.com", dns: dns),
-            cdn: .enabled(),
             options: options
         )
 
@@ -658,12 +661,63 @@ domain registrar delegates `example.com` to the generated Cloud DNS zone.
 endpoint, retry backoff, and dead-letter topics. For authenticated push, grant
 the Pub/Sub service identity `roles/iam.serviceAccountTokenCreator` on the push
 service account and grant that push account invocation access to the receiving
-Cloud Run service. Cloud Endpoints/ESPv2 configuration remains an explicit
-application deployment concern and can run as a second `GCP.CloudRunService`.
-Linking `GCP.SQLDatabase` creates a passwordless Cloud SQL IAM service-account
-user. Password-bearing users remain outside the framework until secret inputs
-can be represented without placing plaintext credentials in generated Pulumi
-YAML.
+Cloud Run service. Linking `GCP.SQLDatabase` creates a passwordless Cloud SQL
+IAM service-account user. Password-bearing users remain outside the framework
+until secret inputs can be represented without placing plaintext credentials in
+generated Pulumi YAML.
+
+The GCP provider also includes Cloud Run jobs and worker pools, API Gateway
+OpenAPI/gRPC deployments, Eventarc triggers, Cloud Tasks queues, Firestore,
+Spanner, firewall rules, Cloud NAT, and Pulumi lookup helpers for projects,
+networks, subnetworks, and managed DNS zones. These components compose with the
+same explicit API activation and dependency options shown above:
+
+```swift
+let gatewayIdentity = GCP.ServiceAccount("gateway")
+let gateway = GCP.APIGateway(
+    "public-api",
+    document: .openAPI(contents: openAPIDocument),
+    serviceAccount: gatewayIdentity,
+    backends: [service]
+)
+
+let batch = GCP.CloudRunJob(
+    "batch",
+    image: image.reference,
+    serviceAccount: runtimeIdentity,
+    vpc: vpc
+)
+
+_ = GCP.SchedulerJob(
+    "batch-nightly",
+    schedule: "0 2 * * *",
+    target: .cloudRunJob(batch, serviceAccount: runtimeIdentity)
+)
+```
+
+#### GCP coverage boundaries
+
+The supported GCP surface covers the existing AWS provider's infrastructure
+categories, but it does not pretend that unlike services have identical APIs.
+
+| AWS surface | GCP surface | Coverage |
+| --- | --- | --- |
+| Web server, cluster, auto scaling | Cloud Run service and worker pool | Supported |
+| Lambda and cron | Cloud Run job and Cloud Scheduler | Container workloads supported; no native Swift Cloud Functions runtime |
+| API Gateway routes | API Gateway OpenAPI or gRPC document | Supported with GCP-native configuration |
+| SQS queue | Cloud Tasks queue | Supported for HTTP task dispatch; applications create individual tasks |
+| SNS and event sources | Pub/Sub and Eventarc | Supported |
+| DynamoDB and DSQL | Firestore and Spanner | Supported through GCP-native data models |
+| RDS | Cloud SQL | Supported |
+| ElastiCache | Memorystore for Redis | Supported |
+| CloudFront origins | Cloud CDN with Cloud Run, Storage, or external origins | Supported |
+| VPC, security groups, NAT | VPC, firewall rules, and Cloud NAT | Supported |
+| S3 Express One Zone | Rapid Bucket | Blocked by missing Rapid placement fields in the Pulumi GCP bucket schema |
+
+Cloud Storage origins must be explicitly created with `publicReadAccess: true`
+when used with the current CDN component. Cloud Run functions are intentionally
+not modeled because Google does not offer a native Swift functions runtime;
+deploy a Swift container as a Cloud Run service or job instead.
 
 ### Linking
 
@@ -718,8 +772,15 @@ Here is a list of all the linked resources:
 | GCP Pub/Sub Topic   | `TOPIC_<NAME>_NAME`          |
 | GCP Pub/Sub Topic   | `TOPIC_<NAME>_ID`            |
 | GCP Subscription    | `SUBSCRIPTION_<NAME>_NAME`   |
+| GCP Cloud Tasks     | `QUEUE_<NAME>_NAME`          |
+| GCP Cloud Tasks     | `QUEUE_<NAME>_ID`            |
 | GCP Cloud SQL       | `SQLDB_<NAME>_CONNECTION_NAME` |
 | GCP Cloud SQL       | `SQLDB_<NAME>_DATABASE_NAME` |
+| GCP Firestore       | `FIRESTORE_<NAME>_NAME`      |
+| GCP Firestore       | `FIRESTORE_<NAME>_PROJECT_ID` |
+| GCP Spanner         | `SPANNER_<NAME>_NAME`        |
+| GCP Spanner         | `SPANNER_<NAME>_INSTANCE`    |
+| GCP Spanner         | `SPANNER_<NAME>_PROJECT_ID`  |
 | GCP Memorystore     | `CACHE_<NAME>_HOSTNAME`      |
 | GCP Memorystore     | `CACHE_<NAME>_PORT`          |
 | GCP Memorystore     | `CACHE_<NAME>_URL`           |

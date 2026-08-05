@@ -6,7 +6,9 @@ Add a first-class Google Cloud provider to Swift Cloud using the same module,
 provider, resource, component, and Pulumi YAML patterns as the existing cloud
 providers. The reference workload is a Swift gRPC service on Cloud Run that
 publishes to Pub/Sub, connects to Cloud SQL, and may run an observability
-sidecar.
+sidecar. The provider should cover the infrastructure categories exposed by the
+AWS module wherever Google Cloud and the Pulumi GCP provider expose an honest
+equivalent.
 
 ## Scope
 
@@ -40,6 +42,19 @@ sidecar.
   and read replicas.
 - Support Cloud DNS and a managed global HTTPS load balancer with optional CDN
   caching in front of Cloud Run.
+- Support Cloud Run jobs and worker pools, including VPC access, secrets,
+  resource links, authenticated execution, and scheduled job execution.
+- Support API Gateway deployments from OpenAPI or gRPC documents, including
+  the API Gateway service identity and authenticated Cloud Run backends.
+- Support Eventarc triggers and Cloud Tasks queues with destination IAM,
+  delivery/retry controls, and queue-scoped enqueuer access.
+- Support Firestore databases and composite indexes, plus Spanner instances,
+  autoscaling, databases, initial schemas, database IAM, and resource links.
+- Support VPC firewall rules and Cloud NAT.
+- Support multi-origin Cloud CDN distributions backed by Cloud Run, Cloud
+  Storage, or external internet endpoints.
+- Support Pulumi invokes for existing GCP projects, networks, subnetworks, and
+  Cloud DNS managed zones.
 - Add focused Swift Testing coverage for generated Pulumi resource shapes and
   provider configuration, including a complete deployment-graph fixture.
 - Document a GCP project example based on a production Cloud Run, Pub/Sub, and
@@ -56,10 +71,17 @@ sidecar.
 - Artifact Registry authentication uses Docker's configured credential store.
   Operators run `gcloud auth configure-docker REGION-docker.pkg.dev` before a
   deployment that pushes an image.
-- The provider does not generate Cloud Endpoints/ESPv2 configuration, create
-  secret payload versions, or encode application-specific Pulumi policy.
-  Those can compose from raw resources or become later components when their
-  contracts are proven independently.
+- API Gateway is document-driven on GCP. It accepts OpenAPI or gRPC service
+  configuration rather than copying the AWS route-builder API.
+- Cloud Tasks is an HTTP task queue, not a subscription abstraction. The
+  component owns queue policy and target authentication; applications still
+  create each task and its request payload through the Cloud Tasks API.
+- Firestore and Spanner cover the document and globally distributed relational
+  data categories, but intentionally expose their native schemas rather than
+  imitating DynamoDB or DSQL types.
+- The provider does not create secret payload versions or encode
+  application-specific Pulumi policy. Those require explicit secret-input and
+  policy contracts.
 - Secret Manager support owns metadata and IAM only. Secret payloads and
   password-based database users require an explicit secret-input contract that
   Swift Cloud does not currently expose. Cloud SQL supports passwordless IAM
@@ -67,6 +89,14 @@ sidecar.
 - The GCS home provider shells out through Swift Cloud's existing subprocess
   boundary to the authenticated `gcloud storage` CLI. It does not add a second
   GCP authentication implementation to the framework.
+- There is no native Swift runtime for Cloud Run functions. Swift functions
+  should be deployed as containerized Cloud Run services or jobs, so a
+  `GCP.Function` facade would misrepresent the deployment model.
+- Google Cloud supports Rapid Bucket, but Pulumi GCP `Bucket` does not expose
+  the placement fields required to configure it. Express/Rapid bucket parity is
+  deferred until those fields exist in the provider schema.
+- Cloud Storage CDN origins require `publicReadAccess: true` with the current
+  backend-bucket design. Private signed-origin access is a separate contract.
 - No live GCP deployment is part of local validation because it would mutate a
   user's cloud project and incur cost.
 
@@ -77,20 +107,38 @@ sidecar.
 - Pulumi Docker Build provider `0.0.22`, verified as the latest GitHub release
   on 2026-08-05.
 
+## AWS-to-GCP coverage
+
+| AWS category | GCP implementation | Status |
+| --- | --- | --- |
+| WebServer, Cluster, AutoScaling | CloudRunService, CloudRunWorkerPool | Covered |
+| Function, Cron | CloudRunJob, SchedulerJob | Container equivalent; native functions are a platform gap |
+| APIGateway | APIGateway | Covered with OpenAPI/gRPC configuration |
+| Queue | TaskQueue | Covered with GCP-native HTTP dispatch semantics |
+| Topic and event sources | Topic, Subscription, EventarcTrigger | Covered |
+| DynamoDB, DSQL | FirestoreDatabase, Spanner.Instance/Database | Covered with GCP-native schemas |
+| SQLDatabase | SQLDatabase | Covered |
+| Cache | Cache | Covered for Redis |
+| Bucket | Bucket | Covered |
+| CDN | CDN, HTTPSLoadBalancer | Covered for Cloud Run, Storage, and external origins |
+| VPC, SecurityGroup, NAT | VPC, FirewallRule, NATGateway | Covered |
+| ExpressBucket | Rapid Bucket | Pulumi provider surface gap |
+| Resource lookups | Project, network, subnetwork, DNS invokes | Covered |
+
 ## Validation
 
 - Formatted all changed Swift sources with `swift-format`.
-- Built all package products with the Swift 6.3 release toolchain.
-- Ran the complete test suite in parallel with the Swift 6.3 release
-  toolchain: 26 tests in 14 suites passed.
-- Encoded a 46-resource production deployment fixture and verified that every
-  Pulumi logical name is unique.
+- Built all package products with the Swift 6.3.3 release toolchain.
+- Ran the complete test suite with Swift 6.3.3: 35 tests in 17 suites passed.
+- Encoded a production deployment fixture containing more than 90 resources
+  and verified that every Pulumi logical name is unique.
 - Exercised GCS home bootstrap and JSON round trips through an injected,
   in-memory `gcloud` command boundary; no live cloud calls were made.
 - Ran `git diff --check` and inspected the final worktree.
 
 ## Status
 
-The broader GCP parity expansion and local validation are complete on the
-`gcp-support` branch. A live GCP preview or deployment remains an
-operator-owned validation step.
+The GCP implementation covers the existing AWS infrastructure categories where
+Google Cloud and Pulumi expose a real equivalent. Native Swift functions and
+Rapid Bucket remain documented platform/provider boundaries. A live GCP preview
+or deployment remains an operator-owned validation step.

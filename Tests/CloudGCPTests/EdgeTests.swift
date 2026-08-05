@@ -38,4 +38,51 @@ struct EdgeTests {
         #expect(record["rrdatas"] as? [String] == ["${testing-api-edge-address.address}"])
         #expect(context.store.resources.contains { $0.type == "gcp:cloudrunv2:ServiceIamMember" })
     }
+
+    @Test("CDN routes Cloud Run, Cloud Storage, and external origins by path")
+    func multiOriginCDN() throws {
+        let context = makeContext()
+        let dns = GCP.DNS("example-zone", zoneName: "example.com", context: context)
+        let service = GCP.CloudRunService(
+            "web",
+            image: "us-docker.pkg.dev/example/web:latest",
+            context: context
+        )
+        let bucket = GCP.Bucket("assets", publicReadAccess: true, context: context)
+        let cdn = GCP.CDN(
+            "web-edge",
+            origins: [
+                .cloudRun(service, path: "*"),
+                .bucket(bucket, path: "/assets/*"),
+                .external(hostname: "images.example.net", path: "/images/*"),
+            ],
+            domainName: .init(hostname: "www.example.com", dns: dns),
+            context: context
+        )
+
+        #expect(cdn.url.description == "https://www.example.com")
+        #expect(cdn.originBackends.count == 3)
+        #expect(cdn.networkEndpointGroups.count == 2)
+        #expect(cdn.networkEndpoints.count == 1)
+        #expect(context.store.resources.contains { $0.type == "gcp:compute:BackendBucket" })
+        #expect(context.store.resources.contains { $0.type == "gcp:compute:GlobalNetworkEndpoint" })
+        #expect(context.store.resources.contains { $0.type == "gcp:storage:BucketIAMMember" })
+
+        let urlMap = try properties(type: "gcp:compute:URLMap", in: context)
+        #expect(urlMap["defaultService"] as? String == "${testing-web-edge-origin-1-backend.id}")
+        let matchers = try #require(urlMap["pathMatchers"] as? [[String: Any]])
+        let matcher = try #require(matchers.first)
+        let rules = try #require(matcher["pathRules"] as? [[String: Any]])
+        #expect(rules.count == 2)
+        #expect(rules.contains { $0["paths"] as? [String] == ["/assets/*"] })
+        #expect(rules.contains { $0["paths"] as? [String] == ["/images/*"] })
+
+        let externalBackend = try properties(
+            type: "gcp:compute:BackendService",
+            in: context,
+            chosenName: "web-edge-origin-3-backend"
+        )
+        #expect(externalBackend["protocol"] as? String == "HTTPS")
+        #expect(externalBackend["customRequestHeaders"] as? [String] == ["Host: images.example.net"])
+    }
 }

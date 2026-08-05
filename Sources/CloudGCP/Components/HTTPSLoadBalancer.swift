@@ -159,14 +159,14 @@ extension GCP.HTTPSLoadBalancer {
         case disabled
         case enabled(defaultTTL: Duration = .seconds(3600), maximumTTL: Duration = .seconds(86_400))
 
-        fileprivate var isEnabled: Bool {
+        var isEnabled: Bool {
             switch self {
             case .disabled: false
             case .enabled: true
             }
         }
 
-        fileprivate var properties: AnyEncodable? {
+        var properties: AnyEncodable? {
             switch self {
             case .disabled:
                 nil
