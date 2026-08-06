@@ -43,11 +43,16 @@ public final class Store: @unchecked Sendable {
 }
 
 extension Store {
-    /// Returns whether a resource with the same provider type and chosen logical name is tracked.
-    public func containsResource(type: String, chosenName: String) -> Bool {
-        resources.contains {
+    /// Returns the tracked resource with the given provider type and chosen logical name.
+    public func resource(type: String, chosenName: String) -> Resource? {
+        resources.first {
             $0.type == type && $0.chosenName == chosenName
         }
+    }
+
+    /// Returns whether a resource with the same provider type and chosen logical name is tracked.
+    public func containsResource(type: String, chosenName: String) -> Bool {
+        resource(type: type, chosenName: chosenName) != nil
     }
 
     public func track(_ resource: Resource) {

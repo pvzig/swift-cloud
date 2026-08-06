@@ -38,7 +38,7 @@ extension GCP {
                 type: "gcp:redis:Instance",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.stage, name),
+                    "name": tokenize(context.gcpStage, name),
                     "region": (location ?? context.gcpRegion).rawValue,
                     "tier": tier.rawValue,
                     "memorySizeGb": memorySizeGB,

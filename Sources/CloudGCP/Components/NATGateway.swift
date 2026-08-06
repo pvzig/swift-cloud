@@ -22,7 +22,7 @@ extension GCP {
         ) {
             precondition(minimumPortsPerVM > 0, "minimumPortsPerVM must be greater than zero")
             let region = (location ?? context.gcpRegion).rawValue
-            let resourceName = tokenize(context.stage, name)
+            let resourceName = tokenize(context.gcpStage, name)
 
             router = Resource(
                 name: "\(name)-router",

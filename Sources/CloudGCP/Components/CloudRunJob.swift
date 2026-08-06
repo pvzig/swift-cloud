@@ -52,7 +52,7 @@ extension GCP {
             self.serviceAccount = serviceAccount
             self.environment = Environment(environment, shape: .nameValueList, context: context)
 
-            let jobName = tokenize(context.stage, name, maxLength: 49)
+            let jobName = tokenize(context.gcpStage, name, maxLength: 49)
             job = Resource(
                 name: name,
                 type: "gcp:cloudrunv2:Job",
@@ -90,19 +90,7 @@ extension GCP {
                                 ]
                             ],
                             "volumes": volumes.map(\.properties),
-                            "vpcAccess": AnyEncodable(
-                                vpc.map {
-                                    [
-                                        "egress": vpcEgress.rawValue,
-                                        "networkInterfaces": [
-                                            [
-                                                "network": $0.network.id,
-                                                "subnetwork": $0.subnetwork.id,
-                                            ]
-                                        ],
-                                    ]
-                                }
-                            ),
+                            "vpcAccess": CloudRunService.vpcAccessProperties(vpc, egress: vpcEgress),
                         ],
                     ],
                 ],

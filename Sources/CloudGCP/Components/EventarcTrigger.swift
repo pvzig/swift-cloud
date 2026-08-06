@@ -29,19 +29,15 @@ extension GCP {
                     maximumDeliveryAttempts == 1,
                     "the GCP provider currently supports only one maximum delivery attempt"
                 )
+                precondition(
+                    target.isCloudRun,
+                    "a retry policy can only be set on Cloud Run destinations"
+                )
             }
 
-            eventReceiverGrant = Resource(
-                name: "\(name)-event-receiver",
-                type: "gcp:projects:IAMMember",
-                properties: [
-                    "project": context.gcpProjectID,
-                    "role": GCP.IAMRole.eventarcEventReceiver.rawValue,
-                    "member": serviceAccount.member,
-                ],
-                options: options,
-                context: context
-            )
+            // Owned by the service account so triggers that share an identity do not
+            // declare competing owners for the same project IAM binding.
+            eventReceiverGrant = serviceAccount.projectRole(.eventarcEventReceiver)
             target.grantInvocation(to: serviceAccount)
 
             let matchingCriteria = [Criterion(attribute: "type", value: eventType)] + criteria
@@ -50,7 +46,7 @@ extension GCP {
                 type: "gcp:eventarc:Trigger",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.stage, name),
+                    "name": tokenize(context.gcpStage, name),
                     "location": (location ?? context.gcpRegion).rawValue,
                     "serviceAccount": serviceAccount.email,
                     "eventDataContentType": contentType.rawValue,
@@ -116,6 +112,13 @@ extension GCP.EventarcTrigger {
             case .workflow(let workflow):
                 ["workflow": workflow]
             }
+        }
+
+        fileprivate var isCloudRun: Bool {
+            if case .cloudRun = self {
+                return true
+            }
+            return false
         }
 
         fileprivate func grantInvocation(to serviceAccount: GCP.ServiceAccount) {

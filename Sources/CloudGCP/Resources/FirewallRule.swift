@@ -30,7 +30,7 @@ extension GCP {
                 type: "gcp:compute:Firewall",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.stage, name),
+                    "name": tokenize(context.gcpStage, name),
                     "network": vpc.network.id,
                     "direction": direction.rawValue,
                     "priority": priority,

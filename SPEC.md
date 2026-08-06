@@ -65,7 +65,23 @@ equivalent.
 - GCP remains explicit. Provider-specific IAM, Cloud Run, Pub/Sub, and Cloud
   SQL semantics are not hidden behind provider-neutral protocols.
 - API activation is explicit through `GCP.ProjectService`; components do not
-  create duplicate owners for the same Google API.
+  create duplicate owners for the same Google API. The same rule applies to
+  every other project-scoped resource: service agents come from
+  `GCP.ServiceIdentity.shared`, project role bindings from
+  `GCP.ServiceAccount.projectRole`, and service-account role bindings from
+  `GCP.ServiceAccount.serviceAccountRole`, so components never declare
+  competing owners for one IAM binding or one service agent.
+- Google Cloud names must match `[a-z]([-a-z0-9]*[a-z0-9])?`. Stages default to
+  the current git branch, so `Context.gcpStage` prefixes stages that do not
+  begin with a letter rather than emitting names Google rejects.
+- Cloud Run owns the `PORT` environment variable and rejects deployments that
+  set it, so the component configures `containerPort` only.
+- Serverless network endpoint groups must be co-located with their Cloud Run
+  service, so the edge components read the service's own location instead of
+  assuming the project default region.
+- API Gateway configurations are immutable. The config id embeds a digest of
+  the document so a changed document creates a new config and repoints the
+  gateway instead of recreating an in-use id.
 - GCP linking is provider-specific because Google IAM grants roles on projects
   and individual resources rather than accepting AWS-style inline policies.
 - Artifact Registry authentication uses Docker's configured credential store.

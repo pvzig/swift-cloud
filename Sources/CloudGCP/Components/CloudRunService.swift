@@ -14,6 +14,18 @@ extension GCP {
             service.output.keyPath("uri")
         }
 
+        /// The region this service was deployed to.
+        ///
+        /// Regional resources that must co-locate with the service, such as
+        /// serverless network endpoint groups, should read this rather than
+        /// assuming the project's default region.
+        public var location: Output<String> {
+            service.output.keyPath("location")
+        }
+
+        /// Cloud Run injects `PORT` into the container from `containerPort`, and
+        /// rejects deployments that set it explicitly, so it is not added to the
+        /// environment here.
         public init(
             _ name: String,
             image: any Input<String>,
@@ -58,7 +70,6 @@ extension GCP {
 
             self.serviceAccount = serviceAccount
             self.environment = Environment(environment, shape: .nameValueList, context: context)
-            self.environment["PORT"] = "\(port)"
 
             let applicationContainer = Self.containerProperties(
                 name: "app",
@@ -81,7 +92,7 @@ extension GCP {
                 livenessProbe: nil
             )
 
-            let serviceName = tokenize(context.stage, name, maxLength: 49)
+            let serviceName = tokenize(context.gcpStage, name, maxLength: 49)
             service = Resource(
                 name: name,
                 type: "gcp:cloudrunv2:Service",
@@ -101,19 +112,7 @@ extension GCP {
                         "timeout": "\(timeout.components.seconds)s",
                         "containers": [applicationContainer] + sidecars.map(\.properties),
                         "volumes": volumes.map(\.properties),
-                        "vpcAccess": AnyEncodable(
-                            vpc.map {
-                                [
-                                    "egress": vpcEgress.rawValue,
-                                    "networkInterfaces": [
-                                        [
-                                            "network": $0.network.id,
-                                            "subnetwork": $0.subnetwork.id,
-                                        ]
-                                    ],
-                                ]
-                            }
-                        ),
+                        "vpcAccess": Self.vpcAccessProperties(vpc, egress: vpcEgress),
                     ],
                     "traffics": [
                         [
@@ -203,7 +202,7 @@ extension GCP.CloudRunService {
             ]
         }
 
-        private static func environmentKey(_ key: String) -> String {
+        static func environmentKey(_ key: String) -> String {
             tokenize(key, separator: "_").uppercased()
         }
     }
@@ -432,19 +431,37 @@ extension GCP.CloudRunService {
         ]
     }
 
+    /// The `vpcAccess` block, shared by every Cloud Run workload shape.
+    static func vpcAccessProperties(_ vpc: GCP.VPC?, egress: VPCEgress) -> AnyEncodable {
+        AnyEncodable(
+            vpc.map {
+                [
+                    "egress": egress.rawValue,
+                    "networkInterfaces": [
+                        [
+                            "network": $0.network.id,
+                            "subnetwork": $0.subnetwork.id,
+                        ]
+                    ],
+                ]
+            }
+        )
+    }
+
     static func environmentProperties(
         _ environment: [String: any Input<String>],
         secrets: [SecretEnvironmentVariable]
     ) -> AnyEncodable {
+        // Literal keys and secret names normalize through the same tokenizer, so
+        // distinct inputs can land on one name. Cloud Run rejects duplicate env
+        // names outright, and a secret is the more specific declaration, so it wins.
+        var claimedNames = Set(secrets.map { SecretEnvironmentVariable.environmentKey($0.name) })
         let literalEnvironment =
             environment
-            .sorted { $0.key < $1.key }
-            .map { key, value in
-                AnyEncodable([
-                    "name": tokenize(key, separator: "_").uppercased(),
-                    "value": value,
-                ])
-            }
+            .map { (name: SecretEnvironmentVariable.environmentKey($0.key), value: $0.value) }
+            .sorted { $0.name < $1.name }
+            .filter { claimedNames.insert($0.name).inserted }
+            .map { AnyEncodable(["name": $0.name, "value": $0.value]) }
         return AnyEncodable(literalEnvironment + secrets.map(\.properties))
     }
 }

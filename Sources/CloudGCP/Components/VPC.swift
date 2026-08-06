@@ -25,7 +25,7 @@ extension GCP {
                 "privateServicePrefixLength must be between 8 and 29"
             )
 
-            let resourceName = tokenize(context.stage, name)
+            let resourceName = tokenize(context.gcpStage, name)
             network = Resource(
                 name: name,
                 type: "gcp:compute:Network",

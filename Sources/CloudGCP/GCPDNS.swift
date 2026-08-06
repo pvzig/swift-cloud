@@ -19,7 +19,7 @@ extension GCP {
                 type: "gcp:dns:ManagedZone",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.stage, name),
+                    "name": tokenize(context.gcpStage, name),
                     "dnsName": zoneName.hasSuffix(".") ? zoneName : "\(zoneName).",
                     "visibility": "public",
                     "dnssecConfig": ["state": dnssecEnabled ? "on" : "off"],

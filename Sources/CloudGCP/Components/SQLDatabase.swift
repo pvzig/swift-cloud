@@ -47,8 +47,14 @@ extension GCP {
                 readReplicaCount == 0 || backupsEnabled,
                 "read replicas require backups"
             )
+            // MySQL replication is driven by the binary log, which this component
+            // only enables alongside point-in-time recovery.
+            precondition(
+                readReplicaCount == 0 || engine.isMySQL == false || pointInTimeRecoveryEnabled,
+                "MySQL read replicas require pointInTimeRecoveryEnabled so binary logging is on"
+            )
             self.engine = engine
-            self.databaseName = databaseName ?? tokenize(context.stage, "app")
+            self.databaseName = databaseName ?? tokenize(context.gcpStage, "app")
             let ipv4Enabled = publicIPv4 ?? (vpc == nil)
             let privateDependencies: [any ResourceProvider] =
                 vpc.map { [$0.privateServiceConnection] } ?? []
@@ -58,7 +64,7 @@ extension GCP {
                 type: "gcp:sql:DatabaseInstance",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.stage, name),
+                    "name": tokenize(context.gcpStage, name),
                     "region": (location ?? context.gcpRegion).rawValue,
                     "databaseVersion": engine.databaseVersion,
                     "settings": [
@@ -114,7 +120,7 @@ extension GCP {
                     type: "gcp:sql:DatabaseInstance",
                     properties: [
                         "project": context.gcpProjectID,
-                        "name": tokenize(context.stage, name, "read", "\(index + 1)"),
+                        "name": tokenize(context.gcpStage, name, "read", "\(index + 1)"),
                         "region": (location ?? context.gcpRegion).rawValue,
                         "databaseVersion": engine.databaseVersion,
                         "masterInstanceName": primaryInstance.name,

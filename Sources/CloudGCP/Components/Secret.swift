@@ -28,7 +28,7 @@ extension GCP {
                 type: "gcp:secretmanager:Secret",
                 properties: [
                     "project": context.gcpProjectID,
-                    "secretId": tokenize(context.stage, name),
+                    "secretId": tokenize(context.gcpStage, name),
                     "replication": ["auto": [:] as [String: String]],
                     "deletionProtection": deletionProtection ?? context.isProduction,
                 ],

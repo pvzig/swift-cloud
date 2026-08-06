@@ -654,6 +654,15 @@ struct GCPInfrastructure: GCPProject {
 }
 ```
 
+Google Cloud requires resource names to start with a lowercase letter, so stages
+that begin with anything else — a ticket-numbered branch such as `123-fix-login`
+— are prefixed with `s-` when generating physical names. Cloud Run sets `PORT`
+in the container from the configured port and rejects deployments that set it
+explicitly, so `port:` only configures the container port. Serverless network
+endpoint groups are created in the region of the Cloud Run service they front,
+so `GCP.CDN` and `GCP.HTTPSLoadBalancer` work with services outside the
+project's default region.
+
 The example assumes payload versions for `api-key` and
 `otel-collector-config` are populated outside Swift Cloud. It also assumes the
 domain registrar delegates `example.com` to the generated Cloud DNS zone.

@@ -31,7 +31,7 @@ extension GCP {
                 type: "gcp:pubsub:Topic",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.stage, name),
+                    "name": tokenize(context.gcpStage, name),
                     "messageRetentionDuration": messageRetention.map {
                         "\($0.components.seconds)s"
                     },

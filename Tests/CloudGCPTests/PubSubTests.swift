@@ -57,4 +57,31 @@ struct PubSubTests {
         #expect(context.store.resources.contains { $0.type == "gcp:pubsub:TopicIAMMember" })
         #expect(context.store.resources.contains { $0.type == "gcp:pubsub:SubscriptionIAMMember" })
     }
+
+    @Test("Granting one role to several members keeps every binding")
+    func repeatedServiceAccountGrants() throws {
+        let context = makeContext()
+        let pushAccount = GCP.ServiceAccount("push", context: context)
+        let pubSubIdentity = GCP.ServiceIdentity("pubsub-agent", service: .pubSub, context: context)
+        let eventarcIdentity = GCP.ServiceIdentity("eventarc-agent", service: .eventarc, context: context)
+
+        pushAccount.grantServiceAccountRole(.serviceAccountTokenCreator, to: pubSubIdentity.member)
+        pushAccount.grantServiceAccountRole(.serviceAccountTokenCreator, to: eventarcIdentity.member)
+        // The same grant repeated is still a single owner.
+        pushAccount.grantServiceAccountRole(.serviceAccountTokenCreator, to: pubSubIdentity.member)
+
+        let grants = context.store.resources.filter { $0.type == "gcp:serviceaccount:IAMMember" }
+        #expect(grants.count == 2)
+        #expect(Set(grants.map(\.chosenName)).count == 2)
+
+        // Two service agents on one subscription must not collapse either.
+        let topic = GCP.Topic("events", context: context)
+        _ = GCP.Subscription("events-worker", topic: topic, context: context)
+            .allowServiceAgentToConsume(pubSubIdentity)
+            .allowServiceAgentToConsume(eventarcIdentity)
+        let subscribers = context.store.resources.filter {
+            $0.type == "gcp:pubsub:SubscriptionIAMMember"
+        }
+        #expect(Set(subscribers.map(\.chosenName)).count == 2)
+    }
 }

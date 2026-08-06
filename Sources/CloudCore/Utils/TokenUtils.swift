@@ -1,6 +1,19 @@
 import Crypto
 import Foundation
 
+/// Returns a short, stable, lowercase hex fingerprint of `inputs`.
+///
+/// Use this when a provider requires a name to change whenever the content it
+/// describes changes, such as an immutable configuration revision.
+public func digest(
+    _ inputs: any Input<String>...,
+    length: Int = 8
+) -> String {
+    let joined = inputs.map { $0.description }.joined(separator: "\u{0}")
+    let hashed = SHA256.hash(data: Data(joined.utf8)).hexEncodedString()
+    return String(hashed.prefix(length))
+}
+
 public func tokenize(
     _ inputs: any Input<String>...,
     separator: String = "-",

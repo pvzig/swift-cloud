@@ -38,7 +38,7 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "location": (location ?? context.gcpRegion).rawValue,
-                    "name": tokenize(context.stage, name),
+                    "name": tokenize(context.gcpStage, name),
                     "desiredState": state.rawValue,
                     "rateLimits": rateLimits.properties,
                     "retryConfig": retry.properties,

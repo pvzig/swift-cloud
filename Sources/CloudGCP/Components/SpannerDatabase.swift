@@ -27,7 +27,7 @@ extension GCP.Spanner {
                 properties: [
                     "project": context.gcpProjectID,
                     "instance": instance.name,
-                    "name": tokenize(context.stage, name, maxLength: 30),
+                    "name": tokenize(context.gcpStage, name, maxLength: 30),
                     "databaseDialect": dialect.rawValue,
                     "ddls": schema,
                     "versionRetentionPeriod": versionRetentionPeriod,

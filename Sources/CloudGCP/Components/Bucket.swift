@@ -29,7 +29,7 @@ extension GCP {
                     "project": context.gcpProjectID,
                     "name": tokenize(
                         context.gcpProjectID,
-                        context.stage,
+                        context.gcpStage,
                         name,
                         maxLength: 63
                     ),

@@ -36,7 +36,7 @@ extension GCP {
                 type: "gcp:pubsub:Subscription",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.stage, name),
+                    "name": tokenize(context.gcpStage, name),
                     "topic": topic.name,
                     "ackDeadlineSeconds": acknowledgementSeconds,
                     "pushConfig": delivery.pushProperties,
@@ -143,7 +143,9 @@ extension GCP.Subscription {
     @discardableResult
     public func allowServiceAgentToConsume(_ serviceIdentity: GCP.ServiceIdentity) -> Self {
         _ = Resource(
-            name: "\(resource.chosenName)-subscriber-service-agent",
+            // The identity is part of the name so two service agents on one
+            // subscription do not collapse into a single logical resource.
+            name: "\(resource.chosenName)-subscriber-\(serviceIdentity.resource.chosenName)",
             type: "gcp:pubsub:SubscriptionIAMMember",
             properties: [
                 "project": resource.context.gcpProjectID,

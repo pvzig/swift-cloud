@@ -25,6 +25,7 @@ extension GCP {
                 "attemptDeadline must be between 15 and 1800 seconds"
             )
             target.validate()
+            target.grantInvocation()
 
             job = Resource(
                 name: name,
@@ -32,7 +33,7 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "region": (location ?? context.gcpRegion).rawValue,
-                    "name": tokenize(context.stage, name),
+                    "name": tokenize(context.gcpStage, name),
                     "schedule": schedule,
                     "timeZone": timeZone,
                     "paused": paused,
@@ -75,6 +76,19 @@ extension GCP.SchedulerJob {
             bodyBase64: String?
         )
         case pubSub(topic: GCP.Topic, dataBase64: String?, attributes: [String: String])
+        case cloudRunService(
+            GCP.CloudRunService,
+            path: String,
+            method: HTTPMethod,
+            serviceAccount: GCP.ServiceAccount,
+            headers: [String: String],
+            bodyBase64: String?
+        )
+        case cloudRunJobExecution(
+            GCP.CloudRunJob,
+            serviceAccount: GCP.ServiceAccount,
+            bodyBase64: String?
+        )
 
         public static func cloudRun(
             _ service: GCP.CloudRunService,
@@ -84,12 +98,11 @@ extension GCP.SchedulerJob {
             headers: [String: String] = [:],
             bodyBase64: String? = nil
         ) -> Self {
-            service.allowInvocation(from: serviceAccount)
-            return .http(
-                uri: "\(service.url)\(path)",
+            .cloudRunService(
+                service,
+                path: path,
                 method: method,
                 serviceAccount: serviceAccount,
-                audience: service.url,
                 headers: headers,
                 bodyBase64: bodyBase64
             )
@@ -100,19 +113,53 @@ extension GCP.SchedulerJob {
             serviceAccount: GCP.ServiceAccount,
             bodyBase64: String? = nil
         ) -> Self {
-            job.allowExecution(from: serviceAccount)
-            return .oauthHTTP(
-                uri: job.runURI,
-                method: .post,
-                serviceAccount: serviceAccount,
-                scope: "https://www.googleapis.com/auth/cloud-platform",
-                headers: ["Content-Type": "application/json"],
-                bodyBase64: bodyBase64
-            )
+            .cloudRunJobExecution(job, serviceAccount: serviceAccount, bodyBase64: bodyBase64)
+        }
+
+        /// Expands the convenience destinations into the request they encode to.
+        fileprivate var resolved: Target {
+            switch self {
+            case .cloudRunService(let service, let path, let method, let serviceAccount, let headers, let body):
+                .http(
+                    uri: "\(service.url)\(path)",
+                    method: method,
+                    serviceAccount: serviceAccount,
+                    audience: service.url,
+                    headers: headers,
+                    bodyBase64: body
+                )
+            case .cloudRunJobExecution(let job, let serviceAccount, let body):
+                .oauthHTTP(
+                    uri: job.runURI,
+                    method: .post,
+                    serviceAccount: serviceAccount,
+                    scope: "https://www.googleapis.com/auth/cloud-platform",
+                    headers: ["Content-Type": "application/json"],
+                    bodyBase64: body
+                )
+            case .http, .oauthHTTP, .pubSub:
+                self
+            }
+        }
+
+        /// Authorizes the scheduler identity against the destination it will call.
+        ///
+        /// This runs when the job is declared rather than when the target value is
+        /// constructed, so building a target that is never scheduled does not leave
+        /// an orphan IAM binding in the stack.
+        fileprivate func grantInvocation() {
+            switch self {
+            case .cloudRunService(let service, _, _, let serviceAccount, _, _):
+                service.allowInvocation(from: serviceAccount)
+            case .cloudRunJobExecution(let job, let serviceAccount, _):
+                job.allowExecution(from: serviceAccount)
+            case .http, .oauthHTTP, .pubSub:
+                break
+            }
         }
 
         fileprivate var httpProperties: AnyEncodable? {
-            switch self {
+            switch resolved {
             case .http(let uri, let method, let serviceAccount, let audience, let headers, let bodyBase64):
                 [
                     "uri": uri,
@@ -137,14 +184,14 @@ extension GCP.SchedulerJob {
                         "scope": scope,
                     ],
                 ]
-            case .pubSub:
+            case .pubSub, .cloudRunService, .cloudRunJobExecution:
                 nil
             }
         }
 
         fileprivate var pubSubProperties: AnyEncodable? {
-            switch self {
-            case .http, .oauthHTTP:
+            switch resolved {
+            case .http, .oauthHTTP, .cloudRunService, .cloudRunJobExecution:
                 nil
             case .pubSub(let topic, let dataBase64, let attributes):
                 [
@@ -156,7 +203,7 @@ extension GCP.SchedulerJob {
         }
 
         fileprivate func validate() {
-            switch self {
+            switch resolved {
             case .http(_, let method, let serviceAccount, let audience, _, let bodyBase64):
                 if bodyBase64 != nil {
                     precondition(
@@ -180,6 +227,8 @@ extension GCP.SchedulerJob {
                     dataBase64?.isEmpty == false || attributes.isEmpty == false,
                     "a Pub/Sub target requires data or at least one attribute"
                 )
+            case .cloudRunService, .cloudRunJobExecution:
+                break
             }
         }
     }

@@ -25,7 +25,7 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "location": (location ?? context.gcpRegion).rawValue,
-                    "repositoryId": tokenize(context.stage, name),
+                    "repositoryId": tokenize(context.gcpStage, name),
                     "description": description,
                     "format": "DOCKER",
                 ],

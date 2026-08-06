@@ -54,8 +54,8 @@ extension GCP {
             }
 
             self.domainName = domainName
-            let resourceName = tokenize(context.stage, name)
-            let region = (location ?? context.gcpRegion).rawValue
+            let resourceName = tokenize(context.gcpStage, name)
+            let regionOverride = location.map { AnyEncodable($0.rawValue) }
             var endpointGroups: [Resource] = []
             var endpoints: [Resource] = []
             var backends: [Resource] = []
@@ -90,7 +90,9 @@ extension GCP {
                         properties: [
                             "project": context.gcpProjectID,
                             "name": "\(physicalName)-neg",
-                            "region": region,
+                            // A serverless NEG must live in the same region as its
+                            // Cloud Run service, which may differ per origin.
+                            "region": regionOverride ?? AnyEncodable(service.location),
                             "networkEndpointType": "SERVERLESS",
                             "cloudRun": ["service": service.name],
                         ],

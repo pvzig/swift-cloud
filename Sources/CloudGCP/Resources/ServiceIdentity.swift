@@ -30,5 +30,29 @@ extension GCP {
                 context: context
             )
         }
+
+        private init(resource: Resource) {
+            self.resource = resource
+        }
+
+        /// Returns the project's service agent for `api`, materializing it once.
+        ///
+        /// A service agent is a project-scoped resource, so components that need one
+        /// share a single owner instead of each declaring a competing resource for
+        /// the same underlying identity.
+        public static func shared(
+            _ api: API,
+            options: Resource.Options? = nil,
+            context: Context = .current
+        ) -> Self {
+            let name = "\(tokenize(api.rawValue))-service-identity"
+            if let existing = context.store.resource(
+                type: "gcp:projects:ServiceIdentity",
+                chosenName: name
+            ) {
+                return .init(resource: existing)
+            }
+            return .init(name, service: api, options: options, context: context)
+        }
     }
 }

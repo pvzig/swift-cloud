@@ -32,4 +32,38 @@ struct GCPProviderTests {
         #expect(api["service"] as? String == "run.googleapis.com")
         #expect(api["disableOnDestroy"] as? Bool == false)
     }
+
+    @Test("Stages that do not start with a letter still produce valid GCP names")
+    func numericStageNaming() throws {
+        // Stages default to the current git branch, which is frequently a ticket
+        // number. Google Cloud requires names to match [a-z]([-a-z0-9]*[a-z0-9])?.
+        let context = makeContext(stage: "123-fix-login")
+        #expect(context.stage == "123-fix-login")
+        #expect(context.gcpStage == "s-123-fix-login")
+
+        _ = GCP.ServiceAccount("backend", context: context)
+        _ = GCP.CloudRunService(
+            "backend",
+            image: "us-docker.pkg.dev/example/backend:latest",
+            context: context
+        )
+        _ = GCP.Bucket("assets", context: context)
+
+        let account = try properties(type: "gcp:serviceaccount:Account", in: context)
+        let service = try properties(type: "gcp:cloudrunv2:Service", in: context)
+        let bucket = try properties(type: "gcp:storage:Bucket", in: context)
+        for name in [
+            account["accountId"] as? String,
+            service["name"] as? String,
+            bucket["name"] as? String,
+        ] {
+            let name = try #require(name)
+            #expect(name.first?.isLetter == true, "\(name) must begin with a letter")
+        }
+    }
+
+    @Test("Letter-led stages are left untouched")
+    func letterStageNaming() {
+        #expect(makeContext(stage: "production").gcpStage == "production")
+    }
 }

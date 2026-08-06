@@ -42,7 +42,7 @@ extension GCP {
                 type: "gcp:cloudrunv2:WorkerPool",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.stage, name, maxLength: 49),
+                    "name": tokenize(context.gcpStage, name, maxLength: 49),
                     "location": (location ?? context.gcpRegion).rawValue,
                     "deletionProtection": deletionProtection,
                     "scaling": scaling.properties,
@@ -70,19 +70,7 @@ extension GCP {
                             ]
                         ],
                         "volumes": volumes.map(\.properties),
-                        "vpcAccess": AnyEncodable(
-                            vpc.map {
-                                [
-                                    "egress": vpcEgress.rawValue,
-                                    "networkInterfaces": [
-                                        [
-                                            "network": $0.network.id,
-                                            "subnetwork": $0.subnetwork.id,
-                                        ]
-                                    ],
-                                ]
-                            }
-                        ),
+                        "vpcAccess": CloudRunService.vpcAccessProperties(vpc, egress: vpcEgress),
                     ],
                 ],
                 options: options,

@@ -135,7 +135,7 @@ struct GatewayAndEventingTests {
         let receiverGrant = try properties(
             type: "gcp:projects:IAMMember",
             in: context,
-            chosenName: "object-created-event-receiver"
+            chosenName: "event-receiver-service-account-roles-eventarc-event-receiver-project-role"
         )
         #expect(receiverGrant["role"] as? String == "roles/eventarc.eventReceiver")
         #expect(
@@ -144,5 +144,76 @@ struct GatewayAndEventingTests {
                     && $0.chosenName.contains("roles-workflows-invoker")
             }
         )
+    }
+
+    @Test("Gateways share one API Gateway service agent and version their API config")
+    func sharedGatewayIdentity() throws {
+        let context = makeContext()
+        let backendIdentity = GCP.ServiceAccount("gateway-identity", context: context)
+        _ = GCP.APIGateway(
+            "public-api",
+            document: .openAPI(contents: "openapi: 3.0.0"),
+            serviceAccount: backendIdentity,
+            context: context
+        )
+        let admin = GCP.APIGateway(
+            "admin-api",
+            document: .openAPI(contents: "openapi: 3.0.0\ninfo: {}"),
+            serviceAccount: backendIdentity,
+            context: context
+        )
+
+        // A service agent is project scoped, so both gateways name the same owner.
+        let identities = context.store.resources.filter {
+            $0.type == "gcp:projects:ServiceIdentity"
+        }
+        #expect(identities.count == 1)
+        #expect(admin.serviceIdentity.resource.chosenName == identities.first?.chosenName)
+
+        // Sharing one backend identity must not duplicate the token creator grant.
+        let tokenGrants = context.store.resources.filter {
+            $0.type == "gcp:serviceaccount:IAMMember"
+        }
+        #expect(tokenGrants.count == 1)
+
+        // API configs are immutable, so distinct documents need distinct ids.
+        let ids = try context.store.resources
+            .filter { $0.type == "gcp:apigateway:ApiConfig" }
+            .map { resource -> String in
+                let encoded = try JSONEncoder().encode(try #require(resource.properties))
+                let object = try #require(
+                    JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+                )
+                return try #require(object["apiConfigId"] as? String)
+            }
+        #expect(ids.count == 2)
+        #expect(Set(ids).count == 2)
+    }
+
+    @Test("Eventarc triggers share one project receiver grant")
+    func sharedEventReceiverGrant() throws {
+        let context = makeContext()
+        let eventIdentity = GCP.ServiceAccount("event-receiver", context: context)
+        let service = GCP.CloudRunService(
+            "worker",
+            image: "us-docker.pkg.dev/example/worker:latest",
+            context: context
+        )
+        for name in ["object-created", "object-deleted"] {
+            _ = GCP.EventarcTrigger(
+                name,
+                eventType: "google.cloud.storage.object.v1.finalized",
+                target: .cloudRun(service, path: "/events"),
+                serviceAccount: eventIdentity,
+                context: context
+            )
+        }
+
+        // Project IAM is one policy document, so the role needs a single owner.
+        let grants = context.store.resources.filter {
+            $0.type == "gcp:projects:IAMMember"
+                && $0.chosenName.contains("roles-eventarc-event-receiver")
+        }
+        #expect(grants.count == 1)
     }
 }

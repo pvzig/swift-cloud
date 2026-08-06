@@ -31,8 +31,8 @@ extension GCP {
 
             let architecture = Architecture.x86
             let dockerFilePath = Docker.Dockerfile.filePath(name)
-            let imageName = tokenize(context.stage, name)
-            let imageTag = "\(repository.registryURI)/\(imageName):\(context.stage)"
+            let imageName = tokenize(context.gcpStage, name)
+            let imageTag = "\(repository.registryURI)/\(imageName):\(context.gcpStage)"
 
             resource = Resource(
                 name: "\(name)-image",

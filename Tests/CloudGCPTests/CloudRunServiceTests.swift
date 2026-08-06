@@ -70,7 +70,8 @@ struct CloudRunServiceTests {
         #expect(resources["cpuIdle"] as? Bool == false)
 
         let environment = try #require(application["envs"] as? [[String: Any]])
-        #expect(environment.contains { $0["name"] as? String == "PORT" && $0["value"] as? String == "8080" })
+        // Cloud Run reserves PORT and rejects deployments that set it explicitly.
+        #expect(environment.contains { $0["name"] as? String == "PORT" } == false)
         #expect(environment.contains { $0["name"] as? String == "SERVICE_NAME" })
         #expect(environment.contains { $0["name"] as? String == "DB_PASSWORD" && $0["valueSource"] != nil })
 
@@ -86,6 +87,30 @@ struct CloudRunServiceTests {
         )
         #expect(publicBinding["member"] as? String == "allUsers")
         #expect(publicBinding["role"] as? String == "roles/run.invoker")
+    }
+
+    @Test("A secret environment variable wins over a literal that normalizes to the same name")
+    func environmentNameCollision() throws {
+        let context = makeContext()
+        _ = GCP.CloudRunService(
+            "backend",
+            image: "us-docker.pkg.dev/example/backend:latest",
+            environment: ["api-key": "literal", "region": "us-east1"],
+            secretEnvironment: [.init("API_KEY", secret: "api-key")],
+            context: context
+        )
+
+        let serviceProperties = try properties(type: "gcp:cloudrunv2:Service", in: context)
+        let template = try #require(serviceProperties["template"] as? [String: Any])
+        let containers = try #require(template["containers"] as? [[String: Any]])
+        let environment = try #require(containers.first?["envs"] as? [[String: Any]])
+
+        // Cloud Run rejects duplicate env names outright.
+        let apiKeys = environment.filter { $0["name"] as? String == "API_KEY" }
+        #expect(apiKeys.count == 1)
+        #expect(apiKeys.first?["valueSource"] != nil)
+        #expect(apiKeys.first?["value"] == nil)
+        #expect(environment.contains { $0["name"] as? String == "REGION" })
     }
 
     @Test("Container image uses Artifact Registry and an immutable output reference")

@@ -29,7 +29,7 @@ extension GCP.Spanner {
                 type: "gcp:spanner:Instance",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.stage, name, maxLength: 30),
+                    "name": tokenize(context.gcpStage, name, maxLength: 30),
                     "config": configuration ?? "regional-\(context.gcpRegion.rawValue)",
                     "displayName": displayName ?? name,
                     "edition": edition.rawValue,

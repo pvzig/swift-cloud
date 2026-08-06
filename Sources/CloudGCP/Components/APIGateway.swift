@@ -34,7 +34,7 @@ extension GCP {
             context: Context = .current
         ) {
             self.serviceAccount = serviceAccount
-            let apiID = tokenize(context.stage, name)
+            let apiID = tokenize(context.gcpStage, name)
 
             api = Resource(
                 name: "\(name)-api",
@@ -48,22 +48,16 @@ extension GCP {
                 context: context
             )
 
-            serviceIdentity = ServiceIdentity(
-                "\(name)-service-identity",
-                service: .apiGateway,
+            serviceIdentity = ServiceIdentity.shared(
+                .apiGateway,
                 options: options,
                 context: context
             )
-            tokenCreatorGrant = Resource(
-                name: "\(name)-service-account-token-creator",
-                type: "gcp:serviceaccount:IAMMember",
-                properties: [
-                    "serviceAccountId": serviceAccount.resource.name,
-                    "role": GCP.IAMRole.serviceAccountTokenCreator.rawValue,
-                    "member": serviceIdentity.member,
-                ],
-                options: options,
-                context: context
+            // Owned by the service account so several gateways can share one backend
+            // identity without declaring competing grants for the same binding.
+            tokenCreatorGrant = serviceAccount.serviceAccountRole(
+                .serviceAccountTokenCreator,
+                to: serviceIdentity.member
             )
             for backend in backends {
                 backend.allowInvocation(from: serviceAccount)
@@ -75,7 +69,15 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "api": api.output.keyPath("apiId"),
-                    "apiConfigId": "\(apiID)-config",
+                    // API configs are immutable. Deriving the id from the document
+                    // means editing it creates a new config and repoints the gateway
+                    // instead of trying to recreate an in-use id, which GCP rejects.
+                    "apiConfigId": tokenize(
+                        apiID,
+                        "config",
+                        digest(document.fingerprint),
+                        maxLength: 63
+                    ),
                     "displayName": displayName,
                     "gatewayConfig": [
                         "backendConfig": [
@@ -119,6 +121,17 @@ extension GCP.APIGateway {
             configurationPath: String = "api_config.yaml"
         )
         case openAPI(contents: String, path: String = "openapi.yaml")
+
+        /// A stable representation of everything that makes this configuration
+        /// distinct, used to give each revision its own immutable config id.
+        fileprivate var fingerprint: String {
+            switch self {
+            case .grpc(let fileDescriptorSet, let descriptorPath, let configuration, let configurationPath):
+                "grpc:\(descriptorPath):\(fileDescriptorSet.base64EncodedString()):\(configurationPath):\(configuration)"
+            case .openAPI(let contents, let path):
+                "openapi:\(path):\(contents)"
+            }
+        }
 
         fileprivate var openapiDocuments: AnyEncodable? {
             switch self {

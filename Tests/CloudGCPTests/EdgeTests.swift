@@ -85,4 +85,66 @@ struct EdgeTests {
         #expect(externalBackend["protocol"] as? String == "HTTPS")
         #expect(externalBackend["customRequestHeaders"] as? [String] == ["Host: images.example.net"])
     }
+
+    @Test("Serverless network endpoint groups follow the Cloud Run service's region")
+    func serverlessEndpointGroupRegion() throws {
+        // A serverless NEG must live in the same region as its Cloud Run service,
+        // which is not necessarily the project's default region.
+        let context = makeContext()
+        let dns = GCP.DNS("example-zone", zoneName: "example.com", context: context)
+        let service = GCP.CloudRunService(
+            "api",
+            image: "us-docker.pkg.dev/example/api:latest",
+            location: .europeWest1,
+            context: context
+        )
+        _ = GCP.HTTPSLoadBalancer(
+            "api-edge",
+            service: service,
+            domainName: .init(hostname: "api.example.com", dns: dns),
+            context: context
+        )
+        _ = GCP.CDN(
+            "api-cdn",
+            origins: [.cloudRun(service, path: "*")],
+            domainName: .init(hostname: "cdn.example.com", dns: dns),
+            context: context
+        )
+
+        #expect(context.gcpRegion.rawValue == "us-east1")
+        let loadBalancerGroup = try properties(
+            type: "gcp:compute:RegionNetworkEndpointGroup",
+            in: context,
+            chosenName: "api-edge-neg"
+        )
+        #expect(loadBalancerGroup["region"] as? String == "${testing-api.location}")
+
+        let cdnGroup = try properties(
+            type: "gcp:compute:RegionNetworkEndpointGroup",
+            in: context,
+            chosenName: "api-cdn-origin-1-neg"
+        )
+        #expect(cdnGroup["region"] as? String == "${testing-api.location}")
+    }
+
+    @Test("An explicit edge location still overrides the service region")
+    func explicitEndpointGroupRegion() throws {
+        let context = makeContext()
+        let dns = GCP.DNS("example-zone", zoneName: "example.com", context: context)
+        let service = GCP.CloudRunService(
+            "api",
+            image: "us-docker.pkg.dev/example/api:latest",
+            context: context
+        )
+        _ = GCP.HTTPSLoadBalancer(
+            "api-edge",
+            service: service,
+            domainName: .init(hostname: "api.example.com", dns: dns),
+            location: .usWest1,
+            context: context
+        )
+
+        let group = try properties(type: "gcp:compute:RegionNetworkEndpointGroup", in: context)
+        #expect(group["region"] as? String == "us-west1")
+    }
 }
