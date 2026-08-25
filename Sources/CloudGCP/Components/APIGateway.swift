@@ -70,12 +70,12 @@ extension GCP {
                     "project": context.gcpProjectID,
                     "api": api.output.keyPath("apiId"),
                     // API configs are immutable. Deriving the id from the document
-                    // means editing it creates a new config and repoints the gateway
+                    // and backend identity means changing either creates a new config
                     // instead of trying to recreate an in-use id, which GCP rejects.
                     "apiConfigId": tokenize(
                         apiID,
                         "config",
-                        digest(document.fingerprint),
+                        digest(document.fingerprint, serviceAccount.email),
                         maxLength: 63
                     ),
                     "displayName": displayName,

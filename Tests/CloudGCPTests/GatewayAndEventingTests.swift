@@ -190,6 +190,27 @@ struct GatewayAndEventingTests {
         #expect(Set(ids).count == 2)
     }
 
+    @Test("API Gateway versions its config when the backend identity changes")
+    func apiGatewayBackendIdentityRevision() throws {
+        func configurationID(serviceAccountName: String) throws -> String {
+            let context = makeContext()
+            let serviceAccount = GCP.ServiceAccount(serviceAccountName, context: context)
+            _ = GCP.APIGateway(
+                "public-api",
+                document: .openAPI(contents: "openapi: 3.0.0"),
+                serviceAccount: serviceAccount,
+                context: context
+            )
+            let configuration = try properties(type: "gcp:apigateway:ApiConfig", in: context)
+            return try #require(configuration["apiConfigId"] as? String)
+        }
+
+        let firstID = try configurationID(serviceAccountName: "gateway-primary")
+        let secondID = try configurationID(serviceAccountName: "gateway-secondary")
+
+        #expect(firstID != secondID)
+    }
+
     @Test("Eventarc triggers share one project receiver grant")
     func sharedEventReceiverGrant() throws {
         let context = makeContext()

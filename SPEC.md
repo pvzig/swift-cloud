@@ -80,8 +80,13 @@ equivalent.
   service, so the edge components read the service's own location instead of
   assuming the project default region.
 - API Gateway configurations are immutable. The config id embeds a digest of
-  the document so a changed document creates a new config and repoints the
-  gateway instead of recreating an in-use id.
+  the document and backend service-account identity so either change creates a
+  new config and repoints the gateway instead of recreating an in-use id.
+- Container images provide Pulumi an inline Dockerfile and opt out of image
+  builds during previews. Deployments still build the release binary before
+  Pulumi builds and pushes the image.
+- Cloud Run secret environment names must be unique after normalization so the
+  generated service never contains duplicate environment-variable entries.
 - GCP linking is provider-specific because Google IAM grants roles on projects
   and individual resources rather than accepting AWS-style inline policies.
 - Artifact Registry authentication uses Docker's configured credential store.
@@ -145,7 +150,7 @@ equivalent.
 
 - Formatted all changed Swift sources with `swift-format`.
 - Built all package products with the Swift 6.3.3 release toolchain.
-- Ran the complete test suite with Swift 6.3.3: 35 tests in 17 suites passed.
+- Ran the complete test suite with Swift 6.3.3: 46 tests in 17 suites passed.
 - Encoded a production deployment fixture containing more than 90 resources
   and verified that every Pulumi logical name is unique.
 - Exercised GCS home bootstrap and JSON round trips through an injected,

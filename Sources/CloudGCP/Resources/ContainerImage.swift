@@ -30,7 +30,12 @@ extension GCP {
             precondition((1...65_535).contains(instancePort), "instancePort must be a valid TCP port")
 
             let architecture = Architecture.x86
-            let dockerFilePath = Docker.Dockerfile.filePath(name)
+            let dockerFile = Docker.Dockerfile.ubuntu(
+                targetName: targetName,
+                architecture: architecture,
+                port: instancePort,
+                arguments: arguments
+            )
             let imageName = tokenize(context.gcpStage, name)
             let imageTag = "\(repository.registryURI)/\(imageName):\(context.gcpStage)"
 
@@ -38,8 +43,12 @@ extension GCP {
                 name: "\(name)-image",
                 type: "docker-build:Image",
                 properties: [
+                    // The Swift release binary is built only for deployments. Keep
+                    // previews input-complete without asking BuildKit to compile an
+                    // image from a binary that preview intentionally did not build.
+                    "buildOnPreview": false,
                     "push": true,
-                    "dockerfile": ["location": dockerFilePath],
+                    "dockerfile": ["inline": dockerFile],
                     "context": ["location": Context.projectDirectory],
                     "platforms": ["linux/amd64"],
                     "tags": [imageTag],
@@ -50,13 +59,6 @@ extension GCP {
             )
 
             context.store.build { context in
-                let dockerFile = Docker.Dockerfile.ubuntu(
-                    targetName: targetName,
-                    architecture: architecture,
-                    port: instancePort,
-                    arguments: arguments
-                )
-                try Docker.Dockerfile.write(dockerFile, to: dockerFilePath)
                 try await context.builder.buildUbuntu(
                     targetName: targetName,
                     architecture: architecture

@@ -67,6 +67,13 @@ extension GCP {
                 scaling.minimumInstances <= scaling.maximumInstances,
                 "minimumInstances must not exceed maximumInstances"
             )
+            let secretEnvironmentNames = secretEnvironment.map {
+                SecretEnvironmentVariable.environmentKey($0.name)
+            }
+            precondition(
+                Set(secretEnvironmentNames).count == secretEnvironmentNames.count,
+                "secretEnvironment names must be unique after normalization"
+            )
 
             self.serviceAccount = serviceAccount
             self.environment = Environment(environment, shape: .nameValueList, context: context)

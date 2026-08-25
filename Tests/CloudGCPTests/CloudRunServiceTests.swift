@@ -113,6 +113,21 @@ struct CloudRunServiceTests {
         #expect(environment.contains { $0["name"] as? String == "REGION" })
     }
 
+    @Test("Secret environment names must be unique after normalization")
+    func duplicateSecretEnvironmentNames() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.CloudRunService(
+                "backend",
+                image: "us-docker.pkg.dev/example/backend:latest",
+                secretEnvironment: [
+                    .init("API-KEY", secret: "api-key"),
+                    .init("API_KEY", secret: "other-api-key"),
+                ],
+                context: makeContext()
+            )
+        }
+    }
+
     @Test("Container image uses Artifact Registry and an immutable output reference")
     func containerImage() throws {
         let context = makeContext()
@@ -129,8 +144,13 @@ struct CloudRunServiceTests {
         let imageResource = try resource(type: "docker-build:Image", in: context)
         #expect(imageResource.dependsOn?.count == 1)
         let imageProperties = try properties(type: "docker-build:Image", in: context)
+        #expect(imageProperties["buildOnPreview"] as? Bool == false)
         #expect(imageProperties["push"] as? Bool == true)
         #expect(imageProperties["platforms"] as? [String] == ["linux/amd64"])
+        let dockerfile = try #require(imageProperties["dockerfile"] as? [String: Any])
+        let inlineDockerfile = try #require(dockerfile["inline"] as? String)
+        #expect(inlineDockerfile.contains("ExampleService"))
+        #expect(dockerfile["location"] == nil)
         #expect(context.store.builds.count == 1)
     }
 }
