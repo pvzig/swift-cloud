@@ -49,6 +49,13 @@ func properties(
         chosenName: chosenName,
         sourceLocation: sourceLocation
     )
+    return try properties(of: resource, sourceLocation: sourceLocation)
+}
+
+func properties(
+    of resource: Resource,
+    sourceLocation: SourceLocation = #_sourceLocation
+) throws -> [String: Any] {
     let encoded = try JSONEncoder().encode(
         try #require(resource.properties, sourceLocation: sourceLocation)
     )

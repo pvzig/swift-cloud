@@ -38,7 +38,7 @@ extension GCP {
                 type: "gcp:redis:Instance",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name),
+                    "name": tokenize(context.gcpStage, name, maxLength: 40),
                     "region": (location ?? context.gcpRegion).rawValue,
                     "tier": tier.rawValue,
                     "memorySizeGb": memorySizeGB,
@@ -66,6 +66,10 @@ extension GCP.Cache {
 }
 
 extension GCP.Cache: GCPLinkable {
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        _ = accessGrants(to: serviceAccount)
+    }
+
     public var actions: [String] {
         []
     }
@@ -86,5 +90,7 @@ extension GCP.Cache: GCPLinkable {
         )
     }
 
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {}
+    public func accessGrants(to serviceAccount: GCP.ServiceAccount) -> [any ResourceProvider] {
+        []
+    }
 }

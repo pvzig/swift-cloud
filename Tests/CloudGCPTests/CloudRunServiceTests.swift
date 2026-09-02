@@ -25,6 +25,7 @@ struct CloudRunServiceTests {
             protocol: .http2,
             cpuAllocation: .always,
             requestConcurrency: 40,
+            timeout: .seconds(300) + .milliseconds(500),
             scaling: .init(minimumInstances: 1, maximumInstances: 4),
             environment: ["service-name": "backend"],
             secretEnvironment: [.init("db-password", secret: "db-password", version: "2")],
@@ -57,6 +58,7 @@ struct CloudRunServiceTests {
         let template = try #require(serviceProperties["template"] as? [String: Any])
         #expect(template["serviceAccount"] as? String == "${testing-backend-service-account.email}")
         #expect(template["maxInstanceRequestConcurrency"] as? Int == 40)
+        #expect(template["timeout"] as? String == "300.5s")
 
         let containers = try #require(template["containers"] as? [[String: Any]])
         #expect(containers.count == 2)
@@ -95,7 +97,7 @@ struct CloudRunServiceTests {
         _ = GCP.CloudRunService(
             "backend",
             image: "us-docker.pkg.dev/example/backend:latest",
-            environment: ["api-key": "literal", "region": "us-east1"],
+            environment: ["api-key": "literal", "region": "us-east1", "foo2bar": "stable"],
             secretEnvironment: [.init("API_KEY", secret: "api-key")],
             context: context
         )
@@ -111,6 +113,8 @@ struct CloudRunServiceTests {
         #expect(apiKeys.first?["valueSource"] != nil)
         #expect(apiKeys.first?["value"] == nil)
         #expect(environment.contains { $0["name"] as? String == "REGION" })
+        #expect(environment.contains { $0["name"] as? String == "FOO2BAR" })
+        #expect(environment.contains { $0["name"] as? String == "FOO2_BAR" } == false)
     }
 
     @Test("Secret environment names must be unique after normalization")
@@ -150,7 +154,27 @@ struct CloudRunServiceTests {
         let dockerfile = try #require(imageProperties["dockerfile"] as? [String: Any])
         let inlineDockerfile = try #require(dockerfile["inline"] as? String)
         #expect(inlineDockerfile.contains("ExampleService"))
+        #expect(inlineDockerfile.contains("CMD [\"--hostname\", \"0.0.0.0\", \"--port\", \"8080\"]"))
         #expect(dockerfile["location"] == nil)
         #expect(context.store.builds.count == 1)
+    }
+
+    @Test("Explicit container arguments replace the default server bind arguments")
+    func explicitContainerArguments() throws {
+        let context = makeContext()
+        let repository = GCP.ArtifactRegistry("containers", context: context)
+        _ = GCP.ContainerImage(
+            "backend",
+            targetName: "ExampleService",
+            repository: repository,
+            arguments: ["serve", "--config", "production.json"],
+            context: context
+        )
+
+        let imageProperties = try properties(type: "docker-build:Image", in: context)
+        let dockerfile = try #require(imageProperties["dockerfile"] as? [String: Any])
+        let inlineDockerfile = try #require(dockerfile["inline"] as? String)
+        #expect(inlineDockerfile.contains("CMD [\"serve\", \"--config\", \"production.json\"]"))
+        #expect(inlineDockerfile.contains("--hostname") == false)
     }
 }

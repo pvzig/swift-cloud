@@ -57,8 +57,8 @@ equivalent.
   Cloud DNS managed zones.
 - Add focused Swift Testing coverage for generated Pulumi resource shapes and
   provider configuration, including a complete deployment-graph fixture.
-- Document a GCP project example based on a production Cloud Run, Pub/Sub, and
-  Cloud SQL topology.
+- Document the GCP surface in the README using the same component-by-component
+  descriptions and focused Swift examples as the AWS surface.
 
 ## Design boundaries
 
@@ -86,9 +86,24 @@ equivalent.
   builds during previews. Deployments still build the release binary before
   Pulumi builds and pushes the image.
 - Cloud Run secret environment names must be unique after normalization so the
-  generated service never contains duplicate environment-variable entries.
+  generated service, job, worker pool, or sidecar never contains duplicate
+  environment-variable entries. Literal environment keys are normalized once.
 - GCP linking is provider-specific because Google IAM grants roles on projects
   and individual resources rather than accepting AWS-style inline policies.
+  Native links return their concrete IAM grants and add them as workload
+  dependencies so Cloud Run cannot race the authorization it needs at startup.
+- Provider-facing physical names apply each resource's length limit after all
+  stage and component suffixes are included; Memorystore uses 40 characters and
+  Compute resources use 63.
+- Firestore creates a stage-scoped named database by default. The project-global
+  `(default)` database remains available only through an explicit `databaseID`.
+- Infrastructure-managed Pub/Sub subscriptions never expire unless callers opt
+  into an inactivity duration. All protobuf duration strings preserve
+  fractional seconds rather than truncating to whole seconds.
+- Eventarc custom transport topics are accepted only for Pub/Sub
+  `messagePublished` triggers, matching the Google API contract.
+- Cloud CDN policies include an explicit signed-URL cache age so the Pulumi
+  provider accepts the policy block.
 - Artifact Registry authentication uses Docker's configured credential store.
   Operators run `gcloud auth configure-docker REGION-docker.pkg.dev` before a
   deployment that pushes an image.
@@ -150,12 +165,14 @@ equivalent.
 
 - Formatted all changed Swift sources with `swift-format`.
 - Built all package products with the Swift 6.3.3 release toolchain.
-- Ran the complete test suite with Swift 6.3.3: 46 tests in 17 suites passed.
+- Ran the complete test suite with Swift 6.3.3: 58 tests in 18 suites passed.
 - Encoded a production deployment fixture containing more than 90 resources
   and verified that every Pulumi logical name is unique.
 - Exercised GCS home bootstrap and JSON round trips through an injected,
   in-memory `gcloud` command boundary; no live cloud calls were made.
 - Ran `git diff --check` and inspected the final worktree.
+- Reviewed every GCP component example in the README against its public Swift
+  initializer and the complete deployment-graph fixture.
 
 ## Status
 

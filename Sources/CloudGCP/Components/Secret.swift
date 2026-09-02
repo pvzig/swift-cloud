@@ -28,7 +28,7 @@ extension GCP {
                 type: "gcp:secretmanager:Secret",
                 properties: [
                     "project": context.gcpProjectID,
-                    "secretId": tokenize(context.gcpStage, name),
+                    "secretId": tokenize(context.gcpStage, name, maxLength: 255),
                     "replication": ["auto": [:] as [String: String]],
                     "deletionProtection": deletionProtection ?? context.isProduction,
                 ],
@@ -42,7 +42,12 @@ extension GCP {
 extension GCP.Secret {
     @discardableResult
     public func allowAccess(from serviceAccount: GCP.ServiceAccount) -> Self {
-        _ = Resource(
+        _ = accessGrant(for: serviceAccount)
+        return self
+    }
+
+    private func accessGrant(for serviceAccount: GCP.ServiceAccount) -> Resource {
+        Resource(
             name: "\(secret.chosenName)-accessor-\(serviceAccount.resource.chosenName)",
             type: "gcp:secretmanager:SecretIamMember",
             properties: [
@@ -54,11 +59,14 @@ extension GCP.Secret {
             options: secret.options,
             context: secret.context
         )
-        return self
     }
 }
 
 extension GCP.Secret: GCPLinkable {
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        _ = accessGrants(to: serviceAccount)
+    }
+
     public var actions: [String] {
         [GCP.IAMRole.secretAccessor.rawValue]
     }
@@ -75,7 +83,7 @@ extension GCP.Secret: GCPLinkable {
         )
     }
 
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        allowAccess(from: serviceAccount)
+    public func accessGrants(to serviceAccount: GCP.ServiceAccount) -> [any ResourceProvider] {
+        [accessGrant(for: serviceAccount)]
     }
 }

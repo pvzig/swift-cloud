@@ -44,10 +44,11 @@ extension GCP {
             precondition((1...taskCount).contains(parallelism), "parallelism must be between 1 and taskCount")
             precondition((0...10).contains(maximumRetries), "maximumRetries must be between 0 and 10")
             precondition(
-                (1...604_800).contains(timeout.components.seconds),
+                (.seconds(1)...Duration.seconds(604_800)).contains(timeout),
                 "timeout must be between 1 second and 7 days"
             )
             precondition([1, 2, 4, 6, 8].contains(cpu), "cpu must be one of 1, 2, 4, 6, or 8")
+            CloudRunService.validateSecretEnvironment(secretEnvironment)
 
             self.serviceAccount = serviceAccount
             self.environment = Environment(environment, shape: .nameValueList, context: context)
@@ -67,7 +68,7 @@ extension GCP {
                         "template": [
                             "serviceAccount": AnyEncodable(serviceAccount?.email),
                             "maxRetries": maximumRetries,
-                            "timeout": "\(timeout.components.seconds)s",
+                            "timeout": timeout.protobufString,
                             "containers": [
                                 [
                                     "name": "job",
@@ -123,6 +124,10 @@ extension GCP.CloudRunJob {
 }
 
 extension GCP.CloudRunJob: EnvironmentProvider, GCPRoleProvider {
+    public var gcpResource: Resource? {
+        job
+    }
+
     public var gcpServiceAccount: GCP.ServiceAccount {
         guard let serviceAccount else {
             preconditionFailure("Linking a Cloud Run job requires an explicit service account")

@@ -58,7 +58,7 @@ extension GCP {
             precondition((1...1_000).contains(requestConcurrency), "requestConcurrency must be between 1 and 1000")
             precondition([1, 2, 4, 6, 8].contains(cpu), "cpu must be one of 1, 2, 4, 6, or 8")
             precondition(
-                (1...3_600).contains(timeout.components.seconds),
+                (.seconds(1)...Duration.seconds(3_600)).contains(timeout),
                 "timeout must be between 1 and 3600 seconds"
             )
             precondition(scaling.minimumInstances >= 0, "minimumInstances must not be negative")
@@ -67,13 +67,7 @@ extension GCP {
                 scaling.minimumInstances <= scaling.maximumInstances,
                 "minimumInstances must not exceed maximumInstances"
             )
-            let secretEnvironmentNames = secretEnvironment.map {
-                SecretEnvironmentVariable.environmentKey($0.name)
-            }
-            precondition(
-                Set(secretEnvironmentNames).count == secretEnvironmentNames.count,
-                "secretEnvironment names must be unique after normalization"
-            )
+            Self.validateSecretEnvironment(secretEnvironment)
 
             self.serviceAccount = serviceAccount
             self.environment = Environment(environment, shape: .nameValueList, context: context)
@@ -116,7 +110,7 @@ extension GCP {
                     "template": [
                         "serviceAccount": AnyEncodable(serviceAccount?.email),
                         "maxInstanceRequestConcurrency": requestConcurrency,
-                        "timeout": "\(timeout.components.seconds)s",
+                        "timeout": timeout.protobufString,
                         "containers": [applicationContainer] + sidecars.map(\.properties),
                         "volumes": volumes.map(\.properties),
                         "vpcAccess": Self.vpcAccessProperties(vpc, egress: vpcEgress),
@@ -323,6 +317,7 @@ extension GCP.CloudRunService {
             livenessProbe: Probe? = nil
         ) {
             precondition([1, 2, 4, 6, 8].contains(cpu), "cpu must be one of 1, 2, 4, 6, or 8")
+            GCP.CloudRunService.validateSecretEnvironment(secretEnvironment)
 
             self.name = name
             self.image = image
@@ -349,7 +344,8 @@ extension GCP.CloudRunService {
                 cpuAllocation: cpuAllocation,
                 environment: GCP.CloudRunService.environmentProperties(
                     environment,
-                    secrets: secretEnvironment
+                    secrets: secretEnvironment,
+                    keysAreNormalized: false
                 ),
                 arguments: arguments,
                 dependencies: dependencies,
@@ -457,7 +453,8 @@ extension GCP.CloudRunService {
 
     static func environmentProperties(
         _ environment: [String: any Input<String>],
-        secrets: [SecretEnvironmentVariable]
+        secrets: [SecretEnvironmentVariable],
+        keysAreNormalized: Bool = true
     ) -> AnyEncodable {
         // Literal keys and secret names normalize through the same tokenizer, so
         // distinct inputs can land on one name. Cloud Run rejects duplicate env
@@ -465,11 +462,26 @@ extension GCP.CloudRunService {
         var claimedNames = Set(secrets.map { SecretEnvironmentVariable.environmentKey($0.name) })
         let literalEnvironment =
             environment
-            .map { (name: SecretEnvironmentVariable.environmentKey($0.key), value: $0.value) }
+            .map {
+                (
+                    name: keysAreNormalized
+                        ? $0.key
+                        : SecretEnvironmentVariable.environmentKey($0.key),
+                    value: $0.value
+                )
+            }
             .sorted { $0.name < $1.name }
             .filter { claimedNames.insert($0.name).inserted }
             .map { AnyEncodable(["name": $0.name, "value": $0.value]) }
         return AnyEncodable(literalEnvironment + secrets.map(\.properties))
+    }
+
+    static func validateSecretEnvironment(_ secrets: [SecretEnvironmentVariable]) {
+        let names = secrets.map { SecretEnvironmentVariable.environmentKey($0.name) }
+        precondition(
+            Set(names).count == names.count,
+            "secretEnvironment names must be unique after normalization"
+        )
     }
 }
 
@@ -486,6 +498,10 @@ struct CloudRunEnvironment: Encodable, Sendable {
 }
 
 extension GCP.CloudRunService: EnvironmentProvider, GCPRoleProvider {
+    public var gcpResource: Resource? {
+        service
+    }
+
     public var gcpServiceAccount: GCP.ServiceAccount {
         guard let serviceAccount else {
             preconditionFailure("Linking a Cloud Run service requires an explicit service account")

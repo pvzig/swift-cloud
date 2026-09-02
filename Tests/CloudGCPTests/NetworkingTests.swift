@@ -13,6 +13,7 @@ struct NetworkingTests {
         let vpc = GCP.VPC("main", options: options, context: context)
         let database = GCP.SQLDatabase(
             "database",
+            engine: .mysql8,
             availability: .regional,
             vpc: vpc,
             readReplicaCount: 1,
@@ -49,6 +50,11 @@ struct NetworkingTests {
             chosenName: "database-read-replica-1"
         )
         #expect(replica["masterInstanceName"] as? String == "${production-database.name}")
+        let replicaSettings = try #require(replica["settings"] as? [String: Any])
+        let replicaFlags = try #require(replicaSettings["databaseFlags"] as? [[String: Any]])
+        #expect(replicaFlags.first?["name"] as? String == "cloudsql_iam_authentication")
+        let replicaIP = try #require(replicaSettings["ipConfiguration"] as? [String: Any])
+        #expect(replicaIP["enablePrivatePathForGoogleCloudServices"] as? Bool == true)
 
         let cache = try properties(type: "gcp:redis:Instance", in: context)
         #expect(cache["tier"] as? String == "STANDARD_HA")
@@ -68,7 +74,6 @@ struct NetworkingTests {
             vpc: vpc,
             action: .allow([.tcp(["8080", "8443"])]),
             sourceRanges: ["35.191.0.0/16", "130.211.0.0/22"],
-            targetTags: ["backend"],
             priority: 900,
             context: context
         )
@@ -84,6 +89,11 @@ struct NetworkingTests {
         #expect(firewall["direction"] as? String == "INGRESS")
         #expect(firewall["priority"] as? Int == 900)
         #expect(firewall["sourceRanges"] as? [String] == ["35.191.0.0/16", "130.211.0.0/22"])
+        #expect(firewall["sourceServiceAccounts"] == nil)
+        #expect(firewall["targetServiceAccounts"] == nil)
+        #expect(firewall["sourceTags"] == nil)
+        #expect(firewall["targetTags"] == nil)
+        #expect(firewall["destinationRanges"] == nil)
         let allows = try #require(firewall["allows"] as? [[String: Any]])
         #expect(allows.first?["protocol"] as? String == "tcp")
         #expect(allows.first?["ports"] as? [String] == ["8080", "8443"])
@@ -97,5 +107,31 @@ struct NetworkingTests {
         let logging = try #require(nat["logConfig"] as? [String: Any])
         #expect(logging["enable"] as? Bool == true)
         #expect(logging["filter"] as? String == "ALL")
+    }
+
+    @Test("Physical names honor Memorystore and Compute limits after suffixes")
+    func physicalNameLimits() throws {
+        let context = makeContext(stage: "12345-improve-billing-dashboard-reports")
+        let componentName = "customer-facing-application-network"
+        let vpc = GCP.VPC(componentName, context: context)
+        _ = GCP.Cache("customer-session-cache", vpc: vpc, context: context)
+        _ = GCP.FirewallRule(
+            "allow-customer-health-check-traffic",
+            vpc: vpc,
+            action: .allow([.tcp(["8080"])]),
+            sourceRanges: ["35.191.0.0/16"],
+            context: context
+        )
+        _ = GCP.NATGateway("customer-application-outbound", vpc: vpc, context: context)
+
+        let cache = try properties(type: "gcp:redis:Instance", in: context)
+        #expect((cache["name"] as? String)?.count == 40)
+
+        for computeResource in context.store.resources where computeResource.type.hasPrefix("gcp:compute:") {
+            let resourceProperties = try properties(of: computeResource)
+            if let physicalName = resourceProperties["name"] as? String {
+                #expect(physicalName.count <= 63)
+            }
+        }
     }
 }

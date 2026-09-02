@@ -47,7 +47,7 @@ struct DataAndLookupTests {
             in: context,
             chosenName: "documents"
         )
-        #expect(firestoreProperties["name"] as? String == "(default)")
+        #expect(firestoreProperties["name"] as? String == "production-documents")
         #expect(firestoreProperties["deleteProtectionState"] as? String == "DELETE_PROTECTION_ENABLED")
         let index = try properties(type: "gcp:firestore:Index", in: context)
         let fields = try #require(index["fields"] as? [[String: Any]])
@@ -70,6 +70,28 @@ struct DataAndLookupTests {
         #expect(context.store.resources.contains { $0.type == "gcp:spanner:DatabaseIAMMember" })
         #expect(service.environment.values.keys.contains("FIRESTORE_DOCUMENTS_NAME"))
         #expect(service.environment.values.keys.contains("SPANNER_ACCOUNTS_NAME"))
+    }
+
+    @Test("Firestore names databases per stage unless the default singleton is explicit")
+    func firestoreDatabaseIDs() throws {
+        let featureContext = makeContext(stage: "feature-x")
+        let mainContext = makeContext(stage: "main")
+        _ = GCP.FirestoreDatabase("documents", context: featureContext)
+        _ = GCP.FirestoreDatabase("documents", databaseID: "archive", context: mainContext)
+
+        let featureDatabase = try properties(type: "gcp:firestore:Database", in: featureContext)
+        let mainDatabase = try properties(type: "gcp:firestore:Database", in: mainContext)
+        #expect(featureDatabase["name"] as? String == "feature-x-documents")
+        #expect(mainDatabase["name"] as? String == "main-archive")
+
+        let defaultContext = makeContext(stage: "production")
+        _ = GCP.FirestoreDatabase(
+            "default-database",
+            databaseID: "(default)",
+            context: defaultContext
+        )
+        let defaultDatabase = try properties(type: "gcp:firestore:Database", in: defaultContext)
+        #expect(defaultDatabase["name"] as? String == "(default)")
     }
 
     @Test("Project, network, subnetwork, and DNS lookups emit Pulumi invokes")

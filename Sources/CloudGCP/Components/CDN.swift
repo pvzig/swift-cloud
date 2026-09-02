@@ -54,7 +54,6 @@ extension GCP {
             }
 
             self.domainName = domainName
-            let resourceName = tokenize(context.gcpStage, name)
             let regionOverride = location.map { AnyEncodable($0.rawValue) }
             var endpointGroups: [Resource] = []
             var endpoints: [Resource] = []
@@ -62,7 +61,6 @@ extension GCP {
 
             for (offset, origin) in origins.enumerated() {
                 let originName = "\(name)-origin-\(offset + 1)"
-                let physicalName = "\(resourceName)-origin-\(offset + 1)"
 
                 switch origin.source {
                 case .bucket(let bucket):
@@ -71,7 +69,14 @@ extension GCP {
                         type: "gcp:compute:BackendBucket",
                         properties: [
                             "project": context.gcpProjectID,
-                            "name": "\(physicalName)-backend",
+                            "name": tokenize(
+                                context.gcpStage,
+                                name,
+                                "origin",
+                                "\(offset + 1)",
+                                "backend",
+                                maxLength: 63
+                            ),
                             "bucketName": bucket.name,
                             "enableCdn": policy.isEnabled,
                             "cdnPolicy": policy.properties,
@@ -89,7 +94,14 @@ extension GCP {
                         type: "gcp:compute:RegionNetworkEndpointGroup",
                         properties: [
                             "project": context.gcpProjectID,
-                            "name": "\(physicalName)-neg",
+                            "name": tokenize(
+                                context.gcpStage,
+                                name,
+                                "origin",
+                                "\(offset + 1)",
+                                "neg",
+                                maxLength: 63
+                            ),
                             // A serverless NEG must live in the same region as its
                             // Cloud Run service, which may differ per origin.
                             "region": regionOverride ?? AnyEncodable(service.location),
@@ -105,7 +117,14 @@ extension GCP {
                         type: "gcp:compute:BackendService",
                         properties: [
                             "project": context.gcpProjectID,
-                            "name": "\(physicalName)-backend",
+                            "name": tokenize(
+                                context.gcpStage,
+                                name,
+                                "origin",
+                                "\(offset + 1)",
+                                "backend",
+                                maxLength: 63
+                            ),
                             "loadBalancingScheme": "EXTERNAL_MANAGED",
                             "protocol": "HTTP",
                             "enableCdn": policy.isEnabled,
@@ -124,7 +143,14 @@ extension GCP {
                         type: "gcp:compute:GlobalNetworkEndpointGroup",
                         properties: [
                             "project": context.gcpProjectID,
-                            "name": "\(physicalName)-neg",
+                            "name": tokenize(
+                                context.gcpStage,
+                                name,
+                                "origin",
+                                "\(offset + 1)",
+                                "neg",
+                                maxLength: 63
+                            ),
                             "networkEndpointType": "INTERNET_FQDN_PORT",
                             "defaultPort": port,
                         ],
@@ -150,7 +176,14 @@ extension GCP {
                         type: "gcp:compute:BackendService",
                         properties: [
                             "project": context.gcpProjectID,
-                            "name": "\(physicalName)-backend",
+                            "name": tokenize(
+                                context.gcpStage,
+                                name,
+                                "origin",
+                                "\(offset + 1)",
+                                "backend",
+                                maxLength: 63
+                            ),
                             "loadBalancingScheme": "EXTERNAL_MANAGED",
                             "protocol": originProtocol.rawValue,
                             "enableCdn": policy.isEnabled,
@@ -186,7 +219,7 @@ extension GCP {
                 type: "gcp:compute:URLMap",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-url-map",
+                    "name": tokenize(context.gcpStage, name, "url-map", maxLength: 63),
                     "defaultService": defaultBackend.id,
                     "hostRules": [["hosts": [domainName.hostname], "pathMatcher": "origins"]],
                     "pathMatchers": [
@@ -206,7 +239,7 @@ extension GCP {
                 type: "gcp:compute:ManagedSslCertificate",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-certificate",
+                    "name": tokenize(context.gcpStage, name, "certificate", maxLength: 63),
                     "managed": ["domains": [domainName.hostname]],
                 ],
                 options: options,
@@ -218,7 +251,7 @@ extension GCP {
                 type: "gcp:compute:TargetHttpsProxy",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-https-proxy",
+                    "name": tokenize(context.gcpStage, name, "https-proxy", maxLength: 63),
                     "urlMap": urlMap.id,
                     "sslCertificates": [certificate.id],
                     "quicOverride": "ENABLE",
@@ -232,7 +265,7 @@ extension GCP {
                 type: "gcp:compute:GlobalAddress",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-address",
+                    "name": tokenize(context.gcpStage, name, "address", maxLength: 63),
                     "addressType": "EXTERNAL",
                     "ipVersion": "IPV4",
                 ],
@@ -245,7 +278,7 @@ extension GCP {
                 type: "gcp:compute:GlobalForwardingRule",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": resourceName,
+                    "name": tokenize(context.gcpStage, name, maxLength: 63),
                     "target": proxy.id,
                     "ipAddress": address.output.keyPath("address"),
                     "ipProtocol": "TCP",

@@ -28,6 +28,8 @@ struct EdgeTests {
         let backend = try properties(type: "gcp:compute:BackendService", in: context)
         #expect(backend["enableCdn"] as? Bool == true)
         #expect(backend["loadBalancingScheme"] as? String == "EXTERNAL_MANAGED")
+        let policy = try #require(backend["cdnPolicy"] as? [String: Any])
+        #expect(policy["signedUrlCacheMaxAgeSec"] as? Int == 0)
 
         let certificate = try properties(type: "gcp:compute:ManagedSslCertificate", in: context)
         let managed = try #require(certificate["managed"] as? [String: Any])
@@ -146,5 +148,84 @@ struct EdgeTests {
 
         let group = try properties(type: "gcp:compute:RegionNetworkEndpointGroup", in: context)
         #expect(group["region"] as? String == "us-west1")
+    }
+
+    @Test("Edge physical names include suffixes within the Compute limit")
+    func physicalNameLimits() throws {
+        let context = makeContext(stage: "12345-improve-billing-dashboard-reports")
+        let dns = GCP.DNS("customer-application-zone", zoneName: "example.com", context: context)
+        let service = GCP.CloudRunService(
+            "customer-facing-application-service",
+            image: "us-docker.pkg.dev/example/application:latest",
+            context: context
+        )
+        _ = GCP.CDN(
+            "customer-facing-application-distribution",
+            origins: [
+                .cloudRun(service, path: "*"),
+                .external(hostname: "images.example.com", path: "/images/*"),
+            ],
+            domainName: .init(hostname: "www.example.com", dns: dns),
+            context: context
+        )
+        _ = GCP.HTTPSLoadBalancer(
+            "customer-facing-application-load-balancer",
+            service: service,
+            domainName: .init(hostname: "api.example.com", dns: dns),
+            context: context
+        )
+
+        for computeResource in context.store.resources where computeResource.type.hasPrefix("gcp:compute:") {
+            let resourceProperties = try properties(of: computeResource)
+            if let physicalName = resourceProperties["name"] as? String {
+                #expect(physicalName.count <= 63)
+            }
+        }
+    }
+
+    @Test("DNS records normalize dynamic trailing dots and expose a dot-free FQDN")
+    func dynamicDNSRecordName() throws {
+        let context = makeContext()
+        let dns = GCP.DNS("example-zone", zoneName: "example.com", context: context)
+        let dynamicName = Output<String>(
+            prefix: "",
+            root: "managed-zone",
+            path: [.property("dnsName")]
+        )
+        let record = GCP.DNSRecord(
+            zone: dns,
+            type: "A",
+            name: dynamicName,
+            records: ["192.0.2.1"],
+            context: context
+        )
+
+        #expect(record.fqdn.description == "${testing-example-zone-record-name.result}")
+        let recordProperties = try properties(type: "gcp:dns:RecordSet", in: context)
+        #expect(recordProperties["name"] as? String == "${testing-example-zone-record-name.result}.")
+
+        let definitions = try variableDefinitions(in: context)
+        let definition = try #require(
+            definitions["testing-example-zone-record-name"] as? [String: Any]
+        )
+        let invocation = try #require(definition["fn::invoke"] as? [String: Any])
+        #expect(invocation["function"] as? String == "str:trimSuffix")
+
+        let literalContext = makeContext()
+        let literalDNS = GCP.DNS(
+            "literal-zone",
+            zoneName: "example.com",
+            context: literalContext
+        )
+        let literalRecord = GCP.DNSRecord(
+            zone: literalDNS,
+            type: "A",
+            name: "api.example.com.",
+            records: ["192.0.2.2"],
+            context: literalContext
+        )
+        #expect(literalRecord.fqdn.description == "api.example.com")
+        let literalProperties = try properties(type: "gcp:dns:RecordSet", in: literalContext)
+        #expect(literalProperties["name"] as? String == "api.example.com.")
     }
 }

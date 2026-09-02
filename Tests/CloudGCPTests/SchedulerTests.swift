@@ -22,6 +22,10 @@ struct SchedulerTests {
                 path: "/internal/tick",
                 serviceAccount: schedulerIdentity
             ),
+            retry: .init(
+                minimumBackoff: .milliseconds(500),
+                maximumBackoff: .seconds(1) + .milliseconds(250)
+            ),
             context: context
         )
 
@@ -35,6 +39,8 @@ struct SchedulerTests {
 
         let retry = try #require(job["retryConfig"] as? [String: Any])
         #expect(retry["retryCount"] as? Int == 3)
+        #expect(retry["minBackoffDuration"] as? String == "0.5s")
+        #expect(retry["maxBackoffDuration"] as? String == "1.25s")
         #expect(context.store.resources.contains { $0.type == "gcp:cloudrunv2:ServiceIamMember" })
     }
 

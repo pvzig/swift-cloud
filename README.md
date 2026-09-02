@@ -500,9 +500,7 @@ return Outputs([
 ### GCP
 
 GCP support follows the same provider-specific component model as AWS. Google
-API activation is explicit and should be declared once per project. This
-example models a production gRPC service with private networking, linked GCP
-resources, scheduled work, managed HTTPS, and an OpenTelemetry sidecar.
+API activation is explicit and should be declared once per project.
 
 Authenticate Pulumi with [Application Default Credentials](https://cloud.google.com/docs/authentication/provide-credentials-adc)
 and configure Docker for each Artifact Registry hostname before deploying an
@@ -511,175 +509,78 @@ image, for example `gcloud auth configure-docker us-east1-docker.pkg.dev`.
 project-specific Cloud Storage bucket through the authenticated `gcloud storage`
 command. Override `home` with `.local()` only when local-only state is intentional.
 
+Declare the APIs required by your components and use them as dependencies so
+activation completes before Pulumi creates the infrastructure:
+
 ```swift
-import Cloud
-
-@main
-struct GCPInfrastructure: GCPProject {
-    let projectID = "my-gcp-project"
-    let region = GCP.Region.usEast1
-
-    func build() async throws -> Outputs {
-        let apis: [any ResourceProvider] = [
-            GCP.ProjectService(.artifactRegistry),
-            GCP.ProjectService(.cloudDNS),
-            GCP.ProjectService(.cloudRun),
-            GCP.ProjectService(.cloudScheduler),
-            GCP.ProjectService(.cloudSQL),
-            GCP.ProjectService(.compute),
-            GCP.ProjectService(.pubSub),
-            GCP.ProjectService(.redis),
-            GCP.ProjectService(.secretManager),
-            GCP.ProjectService(.serviceNetworking),
-            GCP.ProjectService(.storage),
-        ]
-        let options = Resource.Options.dependsOn(apis)
-
-        let runtimeIdentity = GCP.ServiceAccount(
-            "backend",
-            options: options
-        )
-        .grantProjectRole(.loggingWriter)
-        .grantProjectRole(.monitoringMetricWriter)
-        .grantProjectRole(.traceAgent)
-
-        let repository = GCP.ArtifactRegistry(
-            "services",
-            options: options
-        )
-        let image = GCP.ContainerImage(
-            "backend",
-            targetName: "ExampleService",
-            repository: repository
-        )
-
-        let vpc = GCP.VPC("main", options: options)
-        let assets = GCP.Bucket(
-            "assets",
-            versioningEnabled: true,
-            publicReadAccess: true,
-            options: options
-        )
-        let apiKey = GCP.Secret("api-key", options: options)
-
-        let database = GCP.SQLDatabase(
-            "main",
-            engine: .postgres16,
-            databaseName: "app",
-            availability: .regional,
-            vpc: vpc,
-            readReplicaCount: 1,
-            options: options
-        )
-        let cache = GCP.Cache(
-            "cache",
-            vpc: vpc,
-            tier: .highAvailability,
-            options: options
-        )
-        let events = GCP.Topic("events", options: options)
-
-        let service = GCP.CloudRunService(
-            "backend",
-            image: image.reference,
-            serviceAccount: runtimeIdentity,
-            protocol: .http2,
-            cpuAllocation: .always,
-            scaling: .init(minimumInstances: 1, maximumInstances: 10),
-            ingress: .internalLoadBalancer,
-            vpc: vpc,
-            environment: [
-                "GCP_PROJECT_ID": projectID,
-                "OTEL_EXPORTER_OTLP_ENDPOINT": "http://localhost:4318",
-            ],
-            secretEnvironment: [
-                .init("API_KEY", secret: apiKey.secretID)
-            ],
-            applicationDependencies: ["collector"],
-            applicationVolumeMounts: [
-                .init("cloudsql", path: "/cloudsql")
-            ],
-            sidecars: [
-                .init(
-                    "collector",
-                    image: "us-docker.pkg.dev/cloud-ops-agents-artifacts/google-cloud-opentelemetry-collector/otelcol-google:0.143.0",
-                    cpuAllocation: .always,
-                    arguments: ["--config=/etc/otelcol-google/config.yaml"],
-                    volumeMounts: [
-                        .init("otel-config", path: "/etc/otelcol-google/")
-                    ],
-                    startupProbe: .http(path: "/", port: 13133),
-                    livenessProbe: .http(path: "/", port: 13133)
-                )
-            ],
-            volumes: [
-                .cloudSQL(name: "cloudsql", instances: [database.connectionName]),
-                .secret(
-                    name: "otel-config",
-                    secret: "otel-collector-config",
-                    items: [.init(path: "config.yaml")]
-                ),
-            ],
-            options: options
-        ).link([assets, apiKey, database, cache, events])
-
-        _ = GCP.SchedulerJob(
-            "backend-tick",
-            schedule: "*/5 * * * *",
-            target: .cloudRun(service, serviceAccount: runtimeIdentity),
-            options: options
-        )
-
-        let dns = GCP.DNS(
-            "example-zone",
-            zoneName: "example.com",
-            options: options
-        )
-        let edge = GCP.CDN(
-            "backend-edge",
-            origins: [
-                .cloudRun(service, path: "*"),
-                .bucket(assets, path: "/assets/*"),
-            ],
-            domainName: .init(hostname: "api.example.com", dns: dns),
-            options: options
-        )
-
-        return Outputs([
-            "serviceURL": edge.url,
-            "topic": events.id,
-            "cloudSQLConnectionName": database.connectionName,
-        ])
-    }
-}
+let apis: [any ResourceProvider] = [
+    GCP.ProjectService(.artifactRegistry),
+    GCP.ProjectService(.cloudRun),
+]
+let options = Resource.Options.dependsOn(apis)
 ```
 
-Google Cloud requires resource names to start with a lowercase letter, so stages
-that begin with anything else — a ticket-numbered branch such as `123-fix-login`
-— are prefixed with `s-` when generating physical names. Cloud Run sets `PORT`
-in the container from the configured port and rejects deployments that set it
-explicitly, so `port:` only configures the container port. Serverless network
-endpoint groups are created in the region of the Cloud Run service they front,
-so `GCP.CDN` and `GCP.HTTPSLoadBalancer` work with services outside the
-project's default region.
+#### Cloud Run Service
 
-The example assumes payload versions for `api-key` and
-`otel-collector-config` are populated outside Swift Cloud. It also assumes the
-domain registrar delegates `example.com` to the generated Cloud DNS zone.
-`GCP.Subscription` supports pull delivery or an OIDC-authenticated push
-endpoint, retry backoff, and dead-letter topics. For authenticated push, grant
-the Pub/Sub service identity `roles/iam.serviceAccountTokenCreator` on the push
-service account and grant that push account invocation access to the receiving
-Cloud Run service. Linking `GCP.SQLDatabase` creates a passwordless Cloud SQL
-IAM service-account user. Password-bearing users remain outside the framework
-until secret inputs can be represented without placing plaintext credentials in
-generated Pulumi YAML.
+This component builds a Swift executable into an Artifact Registry image and
+runs it as a managed Cloud Run service with configurable scaling, ingress,
+networking, secrets, volumes, probes, and sidecars.
 
-The GCP provider also includes Cloud Run jobs and worker pools, API Gateway
-OpenAPI/gRPC deployments, Eventarc triggers, Cloud Tasks queues, Firestore,
-Spanner, firewall rules, Cloud NAT, and Pulumi lookup helpers for projects,
-networks, subnetworks, and managed DNS zones. These components compose with the
-same explicit API activation and dependency options shown above:
+```swift
+let runtimeIdentity = GCP.ServiceAccount("backend", options: options)
+let repository = GCP.ArtifactRegistry("services", options: options)
+let image = GCP.ContainerImage(
+    "backend",
+    targetName: "App",
+    repository: repository
+)
+
+let service = GCP.CloudRunService(
+    "backend",
+    image: image.reference,
+    serviceAccount: runtimeIdentity,
+    protocol: .http2,
+    scaling: .init(minimumInstances: 1, maximumInstances: 10),
+    publicAccess: true,
+    options: options
+)
+```
+
+#### Cloud Run Job
+
+This component runs a container to completion for batch and scheduled work.
+
+```swift
+let job = GCP.CloudRunJob(
+    "daily-import",
+    image: image.reference,
+    serviceAccount: runtimeIdentity,
+    taskCount: 4,
+    parallelism: 2,
+    timeout: .seconds(900)
+)
+```
+
+#### Cloud Run Worker Pool
+
+This component creates a continuously running worker pool for pull-based
+workloads that do not serve HTTP requests.
+
+```swift
+let subscription = GCP.Subscription("events-subscription", topic: events)
+
+let worker = GCP.CloudRunWorkerPool(
+    "events-worker",
+    image: image.reference,
+    serviceAccount: runtimeIdentity,
+    scaling: .automatic(maximumInstances: 10)
+).link(subscription)
+```
+
+#### API Gateway
+
+This component creates a managed Google Cloud API Gateway from an OpenAPI or
+gRPC document and authorizes it to invoke its Cloud Run backends.
 
 ```swift
 let gatewayIdentity = GCP.ServiceAccount("gateway")
@@ -689,20 +590,284 @@ let gateway = GCP.APIGateway(
     serviceAccount: gatewayIdentity,
     backends: [service]
 )
+```
 
-let batch = GCP.CloudRunJob(
-    "batch",
-    image: image.reference,
-    serviceAccount: runtimeIdentity,
-    vpc: vpc
+#### Bucket
+
+This component creates a Cloud Storage bucket with optional object versioning
+and public read access.
+
+```swift
+let bucket = GCP.Bucket(
+    "assets",
+    storageClass: .standard,
+    versioningEnabled: true
 )
 
-_ = GCP.SchedulerJob(
-    "batch-nightly",
+// Grant the Cloud Run service access and inject bucket metadata.
+service.link(bucket)
+```
+
+#### Pub/Sub
+
+`Topic` and `Subscription` provide asynchronous messaging with pull delivery,
+OIDC-authenticated push delivery, retry policies, and dead-letter topics.
+Subscriptions do not expire by default; pass `expiration: .after(...)` when
+inactivity-based deletion is intentional.
+
+```swift
+let events = GCP.Topic(
+    "events",
+    messageRetention: .seconds(86_400)
+)
+
+let subscription = GCP.Subscription(
+    "events-worker",
+    topic: events,
+    retryPolicy: .init(
+        minimumBackoff: .seconds(10),
+        maximumBackoff: .seconds(600)
+    )
+)
+
+worker.link(subscription)
+```
+
+For authenticated push delivery, grant the Pub/Sub service identity token
+creation access on the push service account and grant that account invocation
+access to the receiving Cloud Run service.
+
+#### Cloud Tasks Queue
+
+This component creates an HTTP task queue with dispatch limits, retry policy,
+OIDC authentication, and queue-scoped enqueuer access. Applications create the
+individual tasks and their request payloads through the Cloud Tasks API.
+
+```swift
+let dispatcherIdentity = GCP.ServiceAccount("task-dispatcher")
+let producerIdentity = GCP.ServiceAccount("task-producer")
+
+let queue = GCP.TaskQueue(
+    "background",
+    rateLimits: .init(maximumConcurrentDispatches: 20),
+    target: .cloudRun(service, serviceAccount: dispatcherIdentity)
+).allowEnqueuing(from: producerIdentity)
+```
+
+#### Cloud Scheduler
+
+This component schedules HTTP, Pub/Sub, Cloud Run service, or Cloud Run job
+targets and creates the destination IAM grants for the convenience targets.
+
+```swift
+let schedulerIdentity = GCP.ServiceAccount("scheduler")
+
+let schedule = GCP.SchedulerJob(
+    "daily-import-schedule",
     schedule: "0 2 * * *",
-    target: .cloudRunJob(batch, serviceAccount: runtimeIdentity)
+    target: .cloudRunJob(job, serviceAccount: schedulerIdentity),
+    timeZone: "America/New_York"
 )
 ```
+
+#### Eventarc Trigger
+
+This component routes Google Cloud events to Cloud Run or Workflows and grants
+the trigger identity permission to invoke its destination.
+
+```swift
+let eventIdentity = GCP.ServiceAccount("event-receiver")
+
+let trigger = GCP.EventarcTrigger(
+    "asset-created",
+    eventType: "google.cloud.storage.object.v1.finalized",
+    target: .cloudRun(service, path: "/events/storage"),
+    serviceAccount: eventIdentity,
+    criteria: [.init(attribute: "bucket", value: "assets")]
+)
+```
+
+#### Cloud SQL
+
+This component creates a PostgreSQL or MySQL Cloud SQL instance and logical
+database with optional private networking, regional availability, IAM users,
+and read replicas.
+
+```swift
+let vpc = GCP.VPC("main")
+
+let database = GCP.SQLDatabase(
+    "main",
+    engine: .postgres16,
+    databaseName: "app",
+    availability: .regional,
+    vpc: vpc,
+    readReplicaCount: 1
+)
+
+// Creates a passwordless IAM database user for the service account.
+service.link(database)
+```
+
+#### Firestore
+
+This component creates a stage-scoped named Firestore database and its declared
+composite indexes. Pass `databaseID: "(default)"` only when the project-global
+default database is intentionally shared across stages.
+
+```swift
+let documents = GCP.FirestoreDatabase(
+    "documents",
+    indexes: [
+        .init(
+            collection: "events",
+            fields: [.ascending("tenantID"), .descending("createdAt")]
+        )
+    ]
+)
+
+service.link(documents)
+```
+
+#### Spanner
+
+These components create a regional or multi-region Spanner instance and a
+database with an optional initial schema.
+
+```swift
+let instance = GCP.Spanner.Instance(
+    "global-data",
+    capacity: .autoscaling(.init())
+)
+
+let database = GCP.Spanner.Database(
+    "accounts",
+    instance: instance,
+    schema: [
+        "CREATE TABLE Accounts (AccountId STRING(36) NOT NULL) "
+            + "PRIMARY KEY (AccountId)"
+    ]
+)
+
+service.link(database)
+```
+
+#### Cache
+
+This component creates a Memorystore for Redis instance on a VPC.
+
+```swift
+let cache = GCP.Cache(
+    "session-cache",
+    vpc: vpc,
+    tier: .highAvailability,
+    memorySizeGB: 2
+)
+
+service.link(cache)
+```
+
+#### Secret Manager
+
+This component manages Secret Manager metadata and IAM access. Secret payload
+versions are populated outside Swift Cloud so plaintext values are not written
+to generated Pulumi YAML.
+
+```swift
+let apiKey = GCP.Secret("api-key")
+
+let service = GCP.CloudRunService(
+    "backend",
+    image: image.reference,
+    serviceAccount: runtimeIdentity,
+    secretEnvironment: [
+        .init("API_KEY", secret: apiKey.secretID)
+    ]
+).link(apiKey)
+```
+
+#### VPC
+
+This component creates a custom-mode VPC, a regional subnet, and private
+service access for resources such as Cloud SQL and Memorystore.
+
+```swift
+let vpc = GCP.VPC(
+    "main",
+    subnetCIDR: "10.0.0.0/20",
+    privateServicePrefixLength: 16
+)
+```
+
+#### Firewall Rule
+
+This resource creates an ingress or egress VPC firewall rule with an explicit
+allow or deny action.
+
+```swift
+let firewall = GCP.FirewallRule(
+    "allow-health-checks",
+    vpc: vpc,
+    action: .allow([.tcp(["8080"])]),
+    sourceRanges: ["35.191.0.0/16", "130.211.0.0/22"]
+)
+```
+
+#### NAT Gateway
+
+This component creates Cloud NAT for outbound internet access from private
+subnets.
+
+```swift
+let nat = GCP.NATGateway(
+    "outbound",
+    vpc: vpc,
+    logging: .errorsOnly
+)
+```
+
+#### HTTPS Load Balancer
+
+This component places a global HTTPS load balancer, managed certificate, and
+DNS record in front of one Cloud Run service.
+
+```swift
+let dns = GCP.DNS("example-zone", zoneName: "example.com")
+
+let loadBalancer = GCP.HTTPSLoadBalancer(
+    "backend-edge",
+    service: service,
+    domainName: .init(hostname: "api.example.com", dns: dns),
+    cdn: .enabled()
+)
+```
+
+#### CDN
+
+This component creates a global HTTPS load balancer and Cloud CDN distribution
+with path-based Cloud Run, Cloud Storage, or external origins.
+
+```swift
+let assets = GCP.Bucket("assets", publicReadAccess: true)
+
+let cdn = GCP.CDN(
+    "application-edge",
+    origins: [
+        .cloudRun(service, path: "*"),
+        .bucket(assets, path: "/assets/*"),
+        .external(hostname: "images.example.net", path: "/images/*"),
+    ],
+    domainName: .init(hostname: "www.example.com", dns: dns)
+)
+```
+
+Google Cloud resource names must start with a lowercase letter, so Swift Cloud
+prefixes stages such as `123-fix-login` with `s-` when generating physical
+names, and hashes overlong names within each Google Cloud service's limit.
+Cloud Run owns the `PORT` environment variable; the `port:` argument
+configures the container port without setting that variable. Serverless network
+endpoint groups are created in the region of the Cloud Run service they front,
+including when it differs from the project's default region.
 
 #### GCP coverage boundaries
 

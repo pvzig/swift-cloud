@@ -16,6 +16,7 @@ extension GCP {
             retryPolicy: RetryPolicy? = nil,
             deadLetterPolicy: DeadLetterPolicy? = nil,
             messageRetention: Duration? = nil,
+            expiration: Expiration = .never,
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
@@ -26,25 +27,27 @@ extension GCP {
             )
             if let messageRetention {
                 precondition(
-                    (600...2_678_400).contains(messageRetention.components.seconds),
+                    (.seconds(600)...Duration.seconds(2_678_400)).contains(messageRetention),
                     "messageRetention must be between 10 minutes and 31 days"
                 )
             }
+            expiration.validate(messageRetention: messageRetention)
 
             resource = Resource(
                 name: name,
                 type: "gcp:pubsub:Subscription",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name),
+                    "name": tokenize(context.gcpStage, name, maxLength: 255),
                     "topic": topic.name,
                     "ackDeadlineSeconds": acknowledgementSeconds,
                     "pushConfig": delivery.pushProperties,
                     "retryPolicy": retryPolicy?.properties,
                     "deadLetterPolicy": deadLetterPolicy?.properties,
                     "messageRetentionDuration": messageRetention.map {
-                        "\($0.components.seconds)s"
+                        $0.protobufString
                     },
+                    "expirationPolicy": expiration.properties,
                 ],
                 options: options,
                 context: context
@@ -54,6 +57,38 @@ extension GCP {
 }
 
 extension GCP.Subscription {
+    public enum Expiration: Sendable {
+        /// Keeps the infrastructure-managed subscription until the stack deletes it.
+        case never
+        /// Deletes the subscription after this period without subscriber activity.
+        case after(Duration)
+
+        fileprivate var properties: AnyEncodable {
+            switch self {
+            case .never:
+                ["ttl": ""]
+            case .after(let duration):
+                ["ttl": duration.protobufString]
+            }
+        }
+
+        fileprivate func validate(messageRetention: Duration?) {
+            guard case .after(let duration) = self else {
+                return
+            }
+            precondition(
+                duration >= .seconds(86_400),
+                "subscription expiration must be at least one day"
+            )
+            if let messageRetention {
+                precondition(
+                    duration >= messageRetention,
+                    "subscription expiration must not precede message retention"
+                )
+            }
+        }
+    }
+
     public enum Delivery: Sendable {
         case pull
         case push(
@@ -94,8 +129,8 @@ extension GCP.Subscription {
 
         fileprivate var properties: AnyEncodable {
             [
-                "minimumBackoff": "\(minimumBackoff.components.seconds)s",
-                "maximumBackoff": "\(maximumBackoff.components.seconds)s",
+                "minimumBackoff": minimumBackoff.protobufString,
+                "maximumBackoff": maximumBackoff.protobufString,
             ]
         }
     }
@@ -125,42 +160,48 @@ extension GCP.Subscription {
 extension GCP.Subscription {
     @discardableResult
     public func allowConsuming(from serviceAccount: GCP.ServiceAccount) -> Self {
-        _ = Resource(
-            name: "\(resource.chosenName)-subscriber-\(serviceAccount.resource.chosenName)",
-            type: "gcp:pubsub:SubscriptionIAMMember",
-            properties: [
-                "project": resource.context.gcpProjectID,
-                "subscription": name,
-                "role": GCP.IAMRole.pubSubSubscriber.rawValue,
-                "member": serviceAccount.member,
-            ],
-            options: resource.options,
-            context: resource.context
+        _ = subscriberGrant(
+            member: serviceAccount.member,
+            bindingName: serviceAccount.resource.chosenName
         )
         return self
     }
 
-    @discardableResult
-    public func allowServiceAgentToConsume(_ serviceIdentity: GCP.ServiceIdentity) -> Self {
-        _ = Resource(
-            // The identity is part of the name so two service agents on one
-            // subscription do not collapse into a single logical resource.
-            name: "\(resource.chosenName)-subscriber-\(serviceIdentity.resource.chosenName)",
+    private func subscriberGrant(
+        member: any Input<String>,
+        bindingName: String
+    ) -> Resource {
+        Resource(
+            // The identity is part of the name so several subscribers do not
+            // collapse into one logical IAM resource.
+            name: "\(resource.chosenName)-subscriber-\(bindingName)",
             type: "gcp:pubsub:SubscriptionIAMMember",
             properties: [
                 "project": resource.context.gcpProjectID,
                 "subscription": name,
                 "role": GCP.IAMRole.pubSubSubscriber.rawValue,
-                "member": serviceIdentity.member,
+                "member": member,
             ],
             options: resource.options,
             context: resource.context
+        )
+    }
+
+    @discardableResult
+    public func allowServiceAgentToConsume(_ serviceIdentity: GCP.ServiceIdentity) -> Self {
+        _ = subscriberGrant(
+            member: serviceIdentity.member,
+            bindingName: serviceIdentity.resource.chosenName
         )
         return self
     }
 }
 
 extension GCP.Subscription: GCPLinkable {
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        _ = accessGrants(to: serviceAccount)
+    }
+
     public var actions: [String] {
         [GCP.IAMRole.pubSubSubscriber.rawValue]
     }
@@ -177,7 +218,12 @@ extension GCP.Subscription: GCPLinkable {
         )
     }
 
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        allowConsuming(from: serviceAccount)
+    public func accessGrants(to serviceAccount: GCP.ServiceAccount) -> [any ResourceProvider] {
+        [
+            subscriberGrant(
+                member: serviceAccount.member,
+                bindingName: serviceAccount.resource.chosenName
+            )
+        ]
     }
 }

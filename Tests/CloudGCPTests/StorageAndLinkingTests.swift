@@ -44,6 +44,25 @@ struct StorageAndLinkingTests {
         #expect(types.contains("gcp:pubsub:SubscriptionIAMMember"))
         #expect(types.contains("gcp:sql:User"))
         #expect(service.environment.values.count >= 13)
+
+        let trackedService = try resource(type: "gcp:cloudrunv2:Service", in: context)
+        let dependencies = try #require(
+            trackedService.pulumiProjectResources().values.first?.options?.dependsOn
+        )
+        let dependencyNames = Set(dependencies.map(\.description))
+        let grantTypes: Set = [
+            "gcp:storage:BucketIAMMember",
+            "gcp:secretmanager:SecretIamMember",
+            "gcp:pubsub:TopicIAMMember",
+            "gcp:pubsub:SubscriptionIAMMember",
+            "gcp:projects:IAMMember",
+            "gcp:sql:User",
+        ]
+        let grants = context.store.resources.filter { grantTypes.contains($0.type) }
+        #expect(grants.count == 7)
+        for grant in grants {
+            #expect(dependencyNames.contains(grant.output.description))
+        }
     }
 
     @Test("Bucket and secret use private-by-default resource settings")

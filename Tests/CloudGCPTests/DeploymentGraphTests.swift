@@ -137,7 +137,6 @@ struct DeploymentGraphTests {
             target: .cloudRun(service, path: "/events/storage"),
             serviceAccount: eventIdentity,
             criteria: [.init(attribute: "bucket", value: "assets")],
-            transportTopic: topic,
             options: options,
             context: context
         )

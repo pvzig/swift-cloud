@@ -24,6 +24,10 @@ extension GCP {
             context: Context = .current
         ) {
             precondition(eventType.isEmpty == false, "eventType must not be empty")
+            precondition(
+                transportTopic == nil || eventType == "google.cloud.pubsub.topic.v1.messagePublished",
+                "a custom transport topic requires the Pub/Sub messagePublished event type"
+            )
             if let maximumDeliveryAttempts {
                 precondition(
                     maximumDeliveryAttempts == 1,
@@ -46,7 +50,7 @@ extension GCP {
                 type: "gcp:eventarc:Trigger",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name),
+                    "name": tokenize(context.gcpStage, name, maxLength: 63),
                     "location": (location ?? context.gcpRegion).rawValue,
                     "serviceAccount": serviceAccount.email,
                     "eventDataContentType": contentType.rawValue,

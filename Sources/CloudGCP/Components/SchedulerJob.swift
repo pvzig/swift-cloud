@@ -21,7 +21,7 @@ extension GCP {
             context: Context = .current
         ) {
             precondition(
-                (15...1_800).contains(attemptDeadline.components.seconds),
+                (.seconds(15)...Duration.seconds(1_800)).contains(attemptDeadline),
                 "attemptDeadline must be between 15 and 1800 seconds"
             )
             target.validate()
@@ -33,11 +33,11 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "region": (location ?? context.gcpRegion).rawValue,
-                    "name": tokenize(context.gcpStage, name),
+                    "name": tokenize(context.gcpStage, name, maxLength: 500),
                     "schedule": schedule,
                     "timeZone": timeZone,
                     "paused": paused,
-                    "attemptDeadline": "\(attemptDeadline.components.seconds)s",
+                    "attemptDeadline": attemptDeadline.protobufString,
                     "httpTarget": target.httpProperties,
                     "pubsubTarget": target.pubSubProperties,
                     "retryConfig": retry.properties,
@@ -258,8 +258,8 @@ extension GCP.SchedulerJob {
         fileprivate var properties: AnyEncodable {
             [
                 "retryCount": retryCount,
-                "minBackoffDuration": "\(minimumBackoff.components.seconds)s",
-                "maxBackoffDuration": "\(maximumBackoff.components.seconds)s",
+                "minBackoffDuration": minimumBackoff.protobufString,
+                "maxBackoffDuration": maximumBackoff.protobufString,
                 "maxDoublings": maximumDoublings,
             ]
         }

@@ -59,6 +59,29 @@ extension Store {
         resources.append(resource)
     }
 
+    /// Adds deployment-order dependencies to a resource that is already tracked.
+    ///
+    /// Component links are declared after workload initialization, so their IAM
+    /// grants do not exist when the workload's `Resource` value is constructed.
+    public func addDependencies(
+        _ dependencies: [any ResourceProvider],
+        to resource: Resource
+    ) {
+        guard dependencies.isEmpty == false else {
+            return
+        }
+        queue.sync {
+            guard
+                let index = _resources.firstIndex(where: {
+                    $0.type == resource.type && $0.chosenName == resource.chosenName
+                })
+            else {
+                preconditionFailure("cannot add dependencies to an untracked resource")
+            }
+            _resources[index].dependsOn = (_resources[index].dependsOn ?? []) + dependencies
+        }
+    }
+
     public func track(_ variable: any VariableProvider) {
         variables.append(variable)
     }

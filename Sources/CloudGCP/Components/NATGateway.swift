@@ -22,14 +22,13 @@ extension GCP {
         ) {
             precondition(minimumPortsPerVM > 0, "minimumPortsPerVM must be greater than zero")
             let region = (location ?? context.gcpRegion).rawValue
-            let resourceName = tokenize(context.gcpStage, name)
 
             router = Resource(
                 name: "\(name)-router",
                 type: "gcp:compute:Router",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-router",
+                    "name": tokenize(context.gcpStage, name, "router", maxLength: 63),
                     "network": vpc.network.id,
                     "region": region,
                 ],
@@ -42,7 +41,7 @@ extension GCP {
                 type: "gcp:compute:RouterNat",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": resourceName,
+                    "name": tokenize(context.gcpStage, name, maxLength: 63),
                     "router": router.name,
                     "region": region,
                     "natIpAllocateOption": "AUTO_ONLY",

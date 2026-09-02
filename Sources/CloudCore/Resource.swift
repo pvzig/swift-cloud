@@ -10,7 +10,7 @@ public struct Resource: Sendable {
     public let type: String
     public let context: Context
     public let properties: AnyEncodable?
-    public let dependsOn: [any ResourceProvider]?
+    public internal(set) var dependsOn: [any ResourceProvider]?
     public let options: Options?
     public let existingId: String?
     public let maxNameLength: Int

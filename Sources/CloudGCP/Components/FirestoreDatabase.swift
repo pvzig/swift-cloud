@@ -13,7 +13,7 @@ extension GCP {
 
         public init(
             _ name: String,
-            databaseID: String = "(default)",
+            databaseID: String? = nil,
             locationID: String? = nil,
             mode: Mode = .native,
             edition: Edition = .standard,
@@ -24,19 +24,32 @@ extension GCP {
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
-            precondition(databaseID.isEmpty == false, "databaseID must not be empty")
+            let requestedDatabaseID = databaseID ?? name
+            precondition(requestedDatabaseID.isEmpty == false, "databaseID must not be empty")
             precondition(
                 edition == .standard || mode == .native,
                 "Firestore Enterprise edition requires native mode"
             )
-            self.databaseID = databaseID
+            precondition(
+                requestedDatabaseID != "(default)" || edition == .standard,
+                "the default Firestore database requires Standard edition"
+            )
+            let physicalDatabaseID =
+                requestedDatabaseID == "(default)"
+                ? requestedDatabaseID
+                : tokenize(context.gcpStage, requestedDatabaseID, maxLength: 63)
+            precondition(
+                physicalDatabaseID == "(default)" || physicalDatabaseID.count >= 4,
+                "Firestore database IDs must contain at least four characters"
+            )
+            self.databaseID = physicalDatabaseID
 
             database = Resource(
                 name: name,
                 type: "gcp:firestore:Database",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": databaseID,
+                    "name": physicalDatabaseID,
                     "locationId": locationID ?? context.gcpRegion.rawValue,
                     "type": mode.rawValue,
                     "databaseEdition": edition.rawValue,
@@ -59,7 +72,7 @@ extension GCP {
                     type: "gcp:firestore:Index",
                     properties: [
                         "project": context.gcpProjectID,
-                        "database": databaseID,
+                        "database": physicalDatabaseID,
                         "collection": index.collection,
                         "queryScope": index.queryScope.rawValue,
                         "fields": index.fields.map(\.properties),
@@ -133,6 +146,10 @@ extension GCP.FirestoreDatabase {
 }
 
 extension GCP.FirestoreDatabase: GCPLinkable {
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        _ = accessGrants(to: serviceAccount)
+    }
+
     public var actions: [String] {
         [GCP.IAMRole.datastoreUser.rawValue]
     }
@@ -152,7 +169,7 @@ extension GCP.FirestoreDatabase: GCPLinkable {
         )
     }
 
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        serviceAccount.grantProjectRole(.datastoreUser)
+    public func accessGrants(to serviceAccount: GCP.ServiceAccount) -> [any ResourceProvider] {
+        [serviceAccount.projectRole(.datastoreUser)]
     }
 }

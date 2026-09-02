@@ -18,7 +18,7 @@ struct CloudRunWorkloadTests {
             serviceAccount: identity,
             taskCount: 8,
             parallelism: 4,
-            timeout: .seconds(900),
+            timeout: .seconds(900) + .milliseconds(500),
             environment: ["mode": "batch"],
             secretEnvironment: [.init("api-key", secret: "api-key")],
             command: ["./processor"],
@@ -39,7 +39,7 @@ struct CloudRunWorkloadTests {
         #expect(execution["parallelism"] as? Int == 4)
         let template = try #require(execution["template"] as? [String: Any])
         #expect(template["serviceAccount"] as? String == "${testing-job-runner-service-account.email}")
-        #expect(template["timeout"] as? String == "900s")
+        #expect(template["timeout"] as? String == "900.5s")
         let containers = try #require(template["containers"] as? [[String: Any]])
         let container = try #require(containers.first)
         #expect(container["commands"] as? [String] == ["./processor"])
@@ -83,5 +83,49 @@ struct CloudRunWorkloadTests {
         let template = try #require(properties["template"] as? [String: Any])
         #expect(template["serviceAccount"] as? String == "${testing-worker-identity-service-account.email}")
         #expect(worker.environment.values.keys.contains("BUCKET_WORK_ITEMS_NAME"))
+    }
+
+    @Test("Cloud Run jobs reject duplicate normalized secret names")
+    func duplicateJobSecretEnvironmentNames() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.CloudRunJob(
+                "processor",
+                image: "us-docker.pkg.dev/example/processor:latest",
+                secretEnvironment: [
+                    .init("api-key", secret: "first"),
+                    .init("API_KEY", secret: "second"),
+                ],
+                context: makeContext()
+            )
+        }
+    }
+
+    @Test("Cloud Run worker pools reject duplicate normalized secret names")
+    func duplicateWorkerPoolSecretEnvironmentNames() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.CloudRunWorkerPool(
+                "consumer",
+                image: "us-docker.pkg.dev/example/consumer:latest",
+                secretEnvironment: [
+                    .init("api-key", secret: "first"),
+                    .init("API_KEY", secret: "second"),
+                ],
+                context: makeContext()
+            )
+        }
+    }
+
+    @Test("Cloud Run sidecars reject duplicate normalized secret names")
+    func duplicateSidecarSecretEnvironmentNames() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.CloudRunService.Sidecar(
+                "collector",
+                image: "us-docker.pkg.dev/example/collector:latest",
+                secretEnvironment: [
+                    .init("api-key", secret: "first"),
+                    .init("API_KEY", secret: "second"),
+                ]
+            )
+        }
     }
 }

@@ -44,14 +44,13 @@ extension GCP {
         ) {
             self.domainName = domainName
             service.makePublic()
-            let resourceName = tokenize(context.gcpStage, name)
 
             networkEndpointGroup = Resource(
                 name: "\(name)-neg",
                 type: "gcp:compute:RegionNetworkEndpointGroup",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-neg",
+                    "name": tokenize(context.gcpStage, name, "neg", maxLength: 63),
                     // A serverless NEG must live in the same region as its Cloud
                     // Run service, which may not be the project's default region.
                     "region": location.map { AnyEncodable($0.rawValue) } ?? AnyEncodable(service.location),
@@ -67,7 +66,7 @@ extension GCP {
                 type: "gcp:compute:BackendService",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-backend",
+                    "name": tokenize(context.gcpStage, name, "backend", maxLength: 63),
                     "loadBalancingScheme": "EXTERNAL_MANAGED",
                     "protocol": "HTTP",
                     "timeoutSec": 30,
@@ -85,7 +84,7 @@ extension GCP {
                 type: "gcp:compute:URLMap",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-url-map",
+                    "name": tokenize(context.gcpStage, name, "url-map", maxLength: 63),
                     "defaultService": backendService.id,
                 ],
                 options: options,
@@ -97,7 +96,7 @@ extension GCP {
                 type: "gcp:compute:ManagedSslCertificate",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-certificate",
+                    "name": tokenize(context.gcpStage, name, "certificate", maxLength: 63),
                     "managed": ["domains": [domainName.hostname]],
                 ],
                 options: options,
@@ -109,7 +108,7 @@ extension GCP {
                 type: "gcp:compute:TargetHttpsProxy",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-https-proxy",
+                    "name": tokenize(context.gcpStage, name, "https-proxy", maxLength: 63),
                     "urlMap": urlMap.id,
                     "sslCertificates": [certificate.id],
                     "quicOverride": "ENABLE",
@@ -123,7 +122,7 @@ extension GCP {
                 type: "gcp:compute:GlobalAddress",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-address",
+                    "name": tokenize(context.gcpStage, name, "address", maxLength: 63),
                     "addressType": "EXTERNAL",
                     "ipVersion": "IPV4",
                 ],
@@ -136,7 +135,7 @@ extension GCP {
                 type: "gcp:compute:GlobalForwardingRule",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": resourceName,
+                    "name": tokenize(context.gcpStage, name, maxLength: 63),
                     "target": proxy.id,
                     "ipAddress": address.output.keyPath("address"),
                     "ipProtocol": "TCP",
@@ -179,6 +178,8 @@ extension GCP.HTTPSLoadBalancer {
                     "maxTtl": maximumTTL.components.seconds,
                     "negativeCaching": true,
                     "serveWhileStale": 86_400,
+                    // The provider requires either this field or a cache-key policy.
+                    "signedUrlCacheMaxAgeSec": 0,
                 ]
             }
         }

@@ -34,7 +34,7 @@ extension GCP {
             context: Context = .current
         ) {
             self.serviceAccount = serviceAccount
-            let apiID = tokenize(context.gcpStage, name)
+            let apiID = tokenize(context.gcpStage, name, maxLength: 63)
 
             api = Resource(
                 name: "\(name)-api",

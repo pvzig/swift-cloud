@@ -25,13 +25,12 @@ extension GCP {
                 "privateServicePrefixLength must be between 8 and 29"
             )
 
-            let resourceName = tokenize(context.gcpStage, name)
             network = Resource(
                 name: name,
                 type: "gcp:compute:Network",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": resourceName,
+                    "name": tokenize(context.gcpStage, name, maxLength: 63),
                     "autoCreateSubnetworks": false,
                     "routingMode": "REGIONAL",
                 ],
@@ -44,7 +43,7 @@ extension GCP {
                 type: "gcp:compute:Subnetwork",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-subnet",
+                    "name": tokenize(context.gcpStage, name, "subnet", maxLength: 63),
                     "region": (location ?? context.gcpRegion).rawValue,
                     "network": network.id,
                     "ipCidrRange": subnetCIDR,
@@ -59,7 +58,7 @@ extension GCP {
                 type: "gcp:compute:GlobalAddress",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": "\(resourceName)-private-services",
+                    "name": tokenize(context.gcpStage, name, "private-services", maxLength: 63),
                     "purpose": "VPC_PEERING",
                     "addressType": "INTERNAL",
                     "prefixLength": privateServicePrefixLength,

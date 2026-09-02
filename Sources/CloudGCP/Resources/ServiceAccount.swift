@@ -91,7 +91,7 @@ extension GCP.ServiceAccount {
         let bindingName = tokenize(
             resource.chosenName,
             tokenize(role.rawValue),
-            tokenize("\(member)"),
+            digest(member),
             "service-account-role"
         )
         if let existing = resource.context.store.resource(

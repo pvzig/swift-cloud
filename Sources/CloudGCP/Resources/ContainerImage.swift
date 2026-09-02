@@ -30,13 +30,22 @@ extension GCP {
             precondition((1...65_535).contains(instancePort), "instancePort must be a valid TCP port")
 
             let architecture = Architecture.x86
-            let dockerFile = Docker.Dockerfile.ubuntu(
-                targetName: targetName,
-                architecture: architecture,
-                port: instancePort,
-                arguments: arguments
-            )
-            let imageName = tokenize(context.gcpStage, name)
+            let dockerFile =
+                if arguments.isEmpty {
+                    Docker.Dockerfile.ubuntu(
+                        targetName: targetName,
+                        architecture: architecture,
+                        port: instancePort
+                    )
+                } else {
+                    Docker.Dockerfile.ubuntu(
+                        targetName: targetName,
+                        architecture: architecture,
+                        port: instancePort,
+                        arguments: arguments
+                    )
+                }
+            let imageName = tokenize(context.gcpStage, name, maxLength: 63)
             let imageTag = "\(repository.registryURI)/\(imageName):\(context.gcpStage)"
 
             resource = Resource(

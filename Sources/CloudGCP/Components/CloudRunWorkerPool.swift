@@ -33,6 +33,7 @@ extension GCP {
         ) {
             precondition([1, 2, 4, 6, 8].contains(cpu), "cpu must be one of 1, 2, 4, 6, or 8")
             scaling.validate()
+            CloudRunService.validateSecretEnvironment(secretEnvironment)
 
             self.serviceAccount = serviceAccount
             self.environment = Environment(environment, shape: .nameValueList, context: context)
@@ -118,6 +119,10 @@ extension GCP.CloudRunWorkerPool {
 }
 
 extension GCP.CloudRunWorkerPool: EnvironmentProvider, GCPRoleProvider {
+    public var gcpResource: Resource? {
+        workerPool
+    }
+
     public var gcpServiceAccount: GCP.ServiceAccount {
         guard let serviceAccount else {
             preconditionFailure("Linking a Cloud Run worker pool requires an explicit service account")

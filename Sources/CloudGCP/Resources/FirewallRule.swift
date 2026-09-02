@@ -25,27 +25,45 @@ extension GCP {
             precondition((0...65_535).contains(priority), "priority must be between 0 and 65535")
             action.validate()
 
+            var properties: [String: AnyEncodable] = [
+                "project": AnyEncodable(context.gcpProjectID),
+                "name": AnyEncodable(tokenize(context.gcpStage, name, maxLength: 63)),
+                "network": AnyEncodable(vpc.network.id),
+                "direction": AnyEncodable(direction.rawValue),
+                "priority": AnyEncodable(priority),
+                "allows": AnyEncodable(action.allowProperties),
+                "denies": AnyEncodable(action.denyProperties),
+                "enableLogging": AnyEncodable(logging.isEnabled),
+                "logConfig": AnyEncodable(logging.properties),
+                "disabled": AnyEncodable(disabled),
+            ]
+            if sourceRanges.isEmpty == false {
+                properties["sourceRanges"] = AnyEncodable(sourceRanges)
+            }
+            if destinationRanges.isEmpty == false {
+                properties["destinationRanges"] = AnyEncodable(destinationRanges)
+            }
+            if sourceServiceAccounts.isEmpty == false {
+                properties["sourceServiceAccounts"] = AnyEncodable(
+                    sourceServiceAccounts.map(AnyEncodable.init)
+                )
+            }
+            if targetServiceAccounts.isEmpty == false {
+                properties["targetServiceAccounts"] = AnyEncodable(
+                    targetServiceAccounts.map(AnyEncodable.init)
+                )
+            }
+            if sourceTags.isEmpty == false {
+                properties["sourceTags"] = AnyEncodable(sourceTags)
+            }
+            if targetTags.isEmpty == false {
+                properties["targetTags"] = AnyEncodable(targetTags)
+            }
+
             resource = Resource(
                 name: name,
                 type: "gcp:compute:Firewall",
-                properties: [
-                    "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name),
-                    "network": vpc.network.id,
-                    "direction": direction.rawValue,
-                    "priority": priority,
-                    "allows": action.allowProperties,
-                    "denies": action.denyProperties,
-                    "sourceRanges": sourceRanges,
-                    "destinationRanges": destinationRanges,
-                    "sourceServiceAccounts": sourceServiceAccounts.map(AnyEncodable.init),
-                    "targetServiceAccounts": targetServiceAccounts.map(AnyEncodable.init),
-                    "sourceTags": sourceTags,
-                    "targetTags": targetTags,
-                    "enableLogging": logging.isEnabled,
-                    "logConfig": logging.properties,
-                    "disabled": disabled,
-                ],
+                properties: AnyEncodable(properties),
                 options: options,
                 context: context
             )

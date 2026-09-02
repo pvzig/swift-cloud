@@ -54,7 +54,7 @@ extension GCP {
                 "MySQL read replicas require pointInTimeRecoveryEnabled so binary logging is on"
             )
             self.engine = engine
-            self.databaseName = databaseName ?? tokenize(context.gcpStage, "app")
+            self.databaseName = databaseName ?? tokenize(context.gcpStage, "app", maxLength: 63)
             let ipv4Enabled = publicIPv4 ?? (vpc == nil)
             let privateDependencies: [any ResourceProvider] =
                 vpc.map { [$0.privateServiceConnection] } ?? []
@@ -64,7 +64,7 @@ extension GCP {
                 type: "gcp:sql:DatabaseInstance",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name),
+                    "name": tokenize(context.gcpStage, name, maxLength: 98),
                     "region": (location ?? context.gcpRegion).rawValue,
                     "databaseVersion": engine.databaseVersion,
                     "settings": [
@@ -120,15 +120,30 @@ extension GCP {
                     type: "gcp:sql:DatabaseInstance",
                     properties: [
                         "project": context.gcpProjectID,
-                        "name": tokenize(context.gcpStage, name, "read", "\(index + 1)"),
+                        "name": tokenize(
+                            context.gcpStage,
+                            name,
+                            "read",
+                            "\(index + 1)",
+                            maxLength: 98
+                        ),
                         "region": (location ?? context.gcpRegion).rawValue,
                         "databaseVersion": engine.databaseVersion,
                         "masterInstanceName": primaryInstance.name,
                         "settings": [
                             "tier": tier,
+                            "databaseFlags": iamAuthenticationEnabled
+                                ? [
+                                    [
+                                        "name": engine.iamAuthenticationFlag,
+                                        "value": "on",
+                                    ]
+                                ]
+                                : [],
                             "ipConfiguration": [
                                 "ipv4Enabled": ipv4Enabled,
                                 "privateNetwork": AnyEncodable(vpc?.network.id),
+                                "enablePrivatePathForGoogleCloudServices": vpc != nil,
                             ],
                         ],
                         "deletionProtection": deletionProtection ?? context.isProduction,
@@ -201,14 +216,29 @@ extension GCP.SQLDatabase {
     /// Grants the Cloud Run identity permission to use the Cloud SQL connector.
     @discardableResult
     public func allowConnections(from serviceAccount: GCP.ServiceAccount) -> Self {
-        serviceAccount.grantProjectRole(.cloudSQLClient)
-        serviceAccount.grantProjectRole(.cloudSQLInstanceUser)
-        _ = createIAMUser(for: serviceAccount)
+        _ = connectionAccessGrants(for: serviceAccount)
         return self
+    }
+
+    private func connectionAccessGrants(
+        for serviceAccount: GCP.ServiceAccount
+    ) -> [any ResourceProvider] {
+        [
+            serviceAccount.projectRole(.cloudSQLClient),
+            serviceAccount.projectRole(.cloudSQLInstanceUser),
+            createIAMUser(for: serviceAccount),
+        ]
     }
 
     @discardableResult
     public func createIAMUser(for serviceAccount: GCP.ServiceAccount) -> Resource {
+        let resourceName = "\(instance.chosenName)-iam-user-\(serviceAccount.resource.chosenName)"
+        if let existing = instance.context.store.resource(
+            type: "gcp:sql:User",
+            chosenName: resourceName
+        ) {
+            return existing
+        }
         let username = Strings.trimSuffix(
             serviceAccount.email,
             suffix: ".gserviceaccount.com",
@@ -216,7 +246,7 @@ extension GCP.SQLDatabase {
             context: instance.context
         ).result
         return Resource(
-            name: "\(instance.chosenName)-iam-user-\(serviceAccount.resource.chosenName)",
+            name: resourceName,
             type: "gcp:sql:User",
             properties: [
                 "project": instance.context.gcpProjectID,
@@ -232,6 +262,10 @@ extension GCP.SQLDatabase {
 }
 
 extension GCP.SQLDatabase: GCPLinkable {
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        _ = accessGrants(to: serviceAccount)
+    }
+
     public var actions: [String] {
         [
             GCP.IAMRole.cloudSQLClient.rawValue,
@@ -256,7 +290,7 @@ extension GCP.SQLDatabase: GCPLinkable {
         )
     }
 
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        allowConnections(from: serviceAccount)
+    public func accessGrants(to serviceAccount: GCP.ServiceAccount) -> [any ResourceProvider] {
+        connectionAccessGrants(for: serviceAccount)
     }
 }

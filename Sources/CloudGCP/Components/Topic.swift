@@ -21,7 +21,7 @@ extension GCP {
         ) {
             if let messageRetention {
                 precondition(
-                    (600...2_678_400).contains(messageRetention.components.seconds),
+                    (.seconds(600)...Duration.seconds(2_678_400)).contains(messageRetention),
                     "messageRetention must be between 10 minutes and 31 days"
                 )
             }
@@ -31,9 +31,9 @@ extension GCP {
                 type: "gcp:pubsub:Topic",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name),
+                    "name": tokenize(context.gcpStage, name, maxLength: 255),
                     "messageRetentionDuration": messageRetention.map {
-                        "\($0.components.seconds)s"
+                        $0.protobufString
                     },
                 ],
                 options: options,
@@ -65,7 +65,15 @@ extension GCP.Topic {
         member: any Input<String>,
         bindingName: String
     ) -> Self {
-        _ = Resource(
+        _ = publishingGrant(member: member, bindingName: bindingName)
+        return self
+    }
+
+    private func publishingGrant(
+        member: any Input<String>,
+        bindingName: String
+    ) -> Resource {
+        Resource(
             name: "\(topic.chosenName)-publisher-\(bindingName)",
             type: "gcp:pubsub:TopicIAMMember",
             properties: [
@@ -77,11 +85,14 @@ extension GCP.Topic {
             options: topic.options,
             context: topic.context
         )
-        return self
     }
 }
 
 extension GCP.Topic: GCPLinkable {
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        _ = accessGrants(to: serviceAccount)
+    }
+
     public var actions: [String] {
         [GCP.IAMRole.pubSubPublisher.rawValue]
     }
@@ -101,7 +112,12 @@ extension GCP.Topic: GCPLinkable {
         )
     }
 
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        allowPublishing(from: serviceAccount)
+    public func accessGrants(to serviceAccount: GCP.ServiceAccount) -> [any ResourceProvider] {
+        [
+            publishingGrant(
+                member: serviceAccount.member,
+                bindingName: serviceAccount.resource.chosenName
+            )
+        ]
     }
 }

@@ -38,7 +38,7 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "location": (location ?? context.gcpRegion).rawValue,
-                    "name": tokenize(context.gcpStage, name),
+                    "name": tokenize(context.gcpStage, name, maxLength: 100),
                     "desiredState": state.rawValue,
                     "rateLimits": rateLimits.properties,
                     "retryConfig": retry.properties,
@@ -119,9 +119,9 @@ extension GCP.TaskQueue {
         fileprivate var properties: AnyEncodable {
             [
                 "maxAttempts": maximumAttempts,
-                "maxRetryDuration": "\(maximumRetryDuration.components.seconds)s",
-                "minBackoff": "\(minimumBackoff.components.seconds)s",
-                "maxBackoff": "\(maximumBackoff.components.seconds)s",
+                "maxRetryDuration": maximumRetryDuration.protobufString,
+                "minBackoff": minimumBackoff.protobufString,
+                "maxBackoff": maximumBackoff.protobufString,
                 "maxDoublings": maximumDoublings,
             ]
         }
@@ -173,7 +173,12 @@ extension GCP.TaskQueue {
 extension GCP.TaskQueue {
     @discardableResult
     public func allowEnqueuing(from serviceAccount: GCP.ServiceAccount) -> Self {
-        _ = Resource(
+        _ = enqueuerGrant(for: serviceAccount)
+        return self
+    }
+
+    private func enqueuerGrant(for serviceAccount: GCP.ServiceAccount) -> Resource {
+        Resource(
             name: "\(queue.chosenName)-enqueuer-\(serviceAccount.resource.chosenName)",
             type: "gcp:cloudtasks:QueueIamMember",
             properties: [
@@ -186,11 +191,14 @@ extension GCP.TaskQueue {
             options: queue.options,
             context: queue.context
         )
-        return self
     }
 }
 
 extension GCP.TaskQueue: GCPLinkable {
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        _ = accessGrants(to: serviceAccount)
+    }
+
     public var actions: [String] {
         [GCP.IAMRole.cloudTasksEnqueuer.rawValue]
     }
@@ -211,7 +219,7 @@ extension GCP.TaskQueue: GCPLinkable {
         )
     }
 
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        allowEnqueuing(from: serviceAccount)
+    public func accessGrants(to serviceAccount: GCP.ServiceAccount) -> [any ResourceProvider] {
+        [enqueuerGrant(for: serviceAccount)]
     }
 }

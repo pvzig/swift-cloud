@@ -71,7 +71,12 @@ extension GCP.Bucket {
 
     @discardableResult
     public func allowObjectAccess(from serviceAccount: GCP.ServiceAccount) -> Self {
-        _ = Resource(
+        _ = objectAccessGrant(for: serviceAccount)
+        return self
+    }
+
+    private func objectAccessGrant(for serviceAccount: GCP.ServiceAccount) -> Resource {
+        Resource(
             name: "\(bucket.chosenName)-object-user-\(serviceAccount.resource.chosenName)",
             type: "gcp:storage:BucketIAMMember",
             properties: [
@@ -82,11 +87,14 @@ extension GCP.Bucket {
             options: bucket.options,
             context: bucket.context
         )
-        return self
     }
 }
 
 extension GCP.Bucket: GCPLinkable {
+    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
+        _ = accessGrants(to: serviceAccount)
+    }
+
     public var actions: [String] {
         [GCP.IAMRole.storageObjectUser.rawValue]
     }
@@ -106,7 +114,7 @@ extension GCP.Bucket: GCPLinkable {
         )
     }
 
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        allowObjectAccess(from: serviceAccount)
+    public func accessGrants(to serviceAccount: GCP.ServiceAccount) -> [any ResourceProvider] {
+        [objectAccessGrant(for: serviceAccount)]
     }
 }

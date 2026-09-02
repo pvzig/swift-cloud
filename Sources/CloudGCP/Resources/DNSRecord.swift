@@ -3,10 +3,7 @@ import CloudCore
 extension GCP {
     public struct DNSRecord: GCPResourceProvider, DNSProviderRecord {
         public let resource: Resource
-
-        public var fqdn: Output<String> {
-            resource.name
-        }
+        public let fqdn: Output<String>
 
         public init(
             zone: DNS,
@@ -18,14 +15,29 @@ extension GCP {
             context: Context = .current
         ) {
             precondition(ttl >= .zero, "ttl must not be negative")
-            let recordName = name.description.hasSuffix(".") ? name.description : "\(name)."
+            let nameWithoutTrailingDot: any Input<String>
+            if let literalName = name as? String {
+                nameWithoutTrailingDot =
+                    literalName.hasSuffix(".")
+                    ? String(literalName.dropLast())
+                    : literalName
+            } else {
+                nameWithoutTrailingDot =
+                    Strings.trimSuffix(
+                        name,
+                        suffix: ".",
+                        name: "\(zone.zone.chosenName)-record-name",
+                        context: context
+                    ).result
+            }
+            fqdn = "\(nameWithoutTrailingDot)"
             resource = Resource(
                 name: "\(zone.zone.chosenName)-\(name)-\(type)-record",
                 type: "gcp:dns:RecordSet",
                 properties: [
                     "project": context.gcpProjectID,
                     "managedZone": zone.zone.name,
-                    "name": recordName,
+                    "name": "\(fqdn)." as Output<String>,
                     "type": type,
                     "ttl": ttl.components.seconds,
                     "rrdatas": records,

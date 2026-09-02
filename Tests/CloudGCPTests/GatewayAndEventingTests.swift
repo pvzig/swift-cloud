@@ -84,11 +84,10 @@ struct GatewayAndEventingTests {
         )
         let transport = GCP.Topic("eventarc-transport", context: context)
         _ = GCP.EventarcTrigger(
-            "object-created",
-            eventType: "google.cloud.storage.object.v1.finalized",
+            "message-published",
+            eventType: "google.cloud.pubsub.topic.v1.messagePublished",
             target: .cloudRun(service, path: "/events"),
             serviceAccount: eventIdentity,
-            criteria: [.init(attribute: "bucket", value: "uploads")],
             transportTopic: transport,
             maximumDeliveryAttempts: 1,
             context: context
@@ -106,7 +105,13 @@ struct GatewayAndEventingTests {
                 maximumConcurrentDispatches: 20,
                 maximumDispatchesPerSecond: 50
             ),
-            retry: .init(maximumAttempts: 8, maximumDoublings: 4),
+            retry: .init(
+                maximumAttempts: 8,
+                maximumRetryDuration: .milliseconds(500),
+                minimumBackoff: .milliseconds(250),
+                maximumBackoff: .milliseconds(750),
+                maximumDoublings: 4
+            ),
             target: .cloudRun(service, serviceAccount: taskIdentity),
             loggingSampleRatio: 0.5,
             context: context
@@ -114,7 +119,7 @@ struct GatewayAndEventingTests {
 
         let trigger = try properties(type: "gcp:eventarc:Trigger", in: context)
         let criteria = try #require(trigger["matchingCriterias"] as? [[String: Any]])
-        #expect(criteria.count == 2)
+        #expect(criteria.count == 1)
         #expect(criteria.contains { $0["attribute"] as? String == "type" })
         let destination = try #require(trigger["destination"] as? [String: Any])
         let cloudRun = try #require(destination["cloudRunService"] as? [String: Any])
@@ -129,6 +134,10 @@ struct GatewayAndEventingTests {
         let target = try #require(queue["httpTarget"] as? [String: Any])
         let token = try #require(target["oidcToken"] as? [String: Any])
         #expect(token["audience"] as? String == "${testing-worker.uri}")
+        let taskRetry = try #require(queue["retryConfig"] as? [String: Any])
+        #expect(taskRetry["maxRetryDuration"] as? String == "0.5s")
+        #expect(taskRetry["minBackoff"] as? String == "0.25s")
+        #expect(taskRetry["maxBackoff"] as? String == "0.75s")
 
         #expect(context.store.resources.filter { $0.type == "gcp:cloudrunv2:ServiceIamMember" }.count == 2)
         #expect(context.store.resources.contains { $0.type == "gcp:cloudtasks:QueueIamMember" })
@@ -144,6 +153,28 @@ struct GatewayAndEventingTests {
                     && $0.chosenName.contains("roles-workflows-invoker")
             }
         )
+    }
+
+    @Test("Custom Eventarc transport topics require Pub/Sub events")
+    func invalidTransportTopicPairing() async {
+        await #expect(processExitsWith: .failure) {
+            let context = makeContext()
+            let serviceAccount = GCP.ServiceAccount("event-receiver", context: context)
+            let service = GCP.CloudRunService(
+                "worker",
+                image: "us-docker.pkg.dev/example/worker:latest",
+                context: context
+            )
+            let topic = GCP.Topic("transport", context: context)
+            _ = GCP.EventarcTrigger(
+                "object-created",
+                eventType: "google.cloud.storage.object.v1.finalized",
+                target: .cloudRun(service),
+                serviceAccount: serviceAccount,
+                transportTopic: topic,
+                context: context
+            )
+        }
     }
 
     @Test("Gateways share one API Gateway service agent and version their API config")
