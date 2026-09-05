@@ -19,8 +19,10 @@ extension Provider {
 }
 
 extension GCP {
-    public struct Provider: ResourceProvider {
+    public struct Provider: ResourcePropertyProvider {
         public let resource: Resource
+        public let projectID: String
+        public let region: Region
 
         public init(
             _ name: String,
@@ -29,6 +31,8 @@ extension GCP {
             zone: String? = nil,
             context: Context = .current
         ) {
+            self.projectID = projectID
+            self.region = region
             resource = Resource(
                 name: name,
                 type: "pulumi:providers:gcp",
@@ -40,6 +44,29 @@ extension GCP {
                 options: nil,
                 context: context
             )
+        }
+
+        public func resourceProperties(
+            _ properties: AnyEncodable?,
+            in _: Context
+        ) -> AnyEncodable? {
+            if var properties = properties?.value as? [String: Any?] {
+                rewriteProject(in: &properties)
+                return AnyEncodable(properties)
+            }
+            if var properties = properties?.value as? [String: AnyEncodable] {
+                var unwrapped = properties.mapValues { $0.value as Any? }
+                rewriteProject(in: &unwrapped)
+                properties = unwrapped.mapValues(AnyEncodable.init)
+                return AnyEncodable(properties)
+            }
+            return properties
+        }
+
+        private func rewriteProject(in properties: inout [String: Any?]) {
+            if properties["project"] != nil {
+                properties["project"] = projectID
+            }
         }
     }
 }

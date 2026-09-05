@@ -21,7 +21,12 @@ extension GCP {
             context: Context = .current
         ) {
             precondition(minimumPortsPerVM > 0, "minimumPortsPerVM must be greater than zero")
-            let region = (location ?? context.gcpRegion).rawValue
+            let selectedLocation = location ?? vpc.location
+            precondition(
+                selectedLocation == vpc.location,
+                "Cloud NAT must use the VPC subnet's region"
+            )
+            let region = selectedLocation.rawValue
 
             router = Resource(
                 name: "\(name)-router",

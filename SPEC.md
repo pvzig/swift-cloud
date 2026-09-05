@@ -71,6 +71,13 @@ equivalent.
   `GCP.ServiceAccount.projectRole`, and service-account role bindings from
   `GCP.ServiceAccount.serviceAccountRole`, so components never declare
   competing owners for one IAM binding or one service agent.
+- Project-scoped resources are shared by logical identity and provider project.
+  Repeated declarations merge ordering and protection options, while API
+  activation is always retained on destroy so one stack cannot disable a
+  project-wide service used by another stack.
+- Explicit `GCP.Provider` resource options control provider-owned project and
+  default-region properties. A component-level location remains authoritative
+  when the caller explicitly supplies one.
 - Google Cloud names must match `[a-z]([-a-z0-9]*[a-z0-9])?`. Stages default to
   the current git branch, so `Context.gcpStage` prefixes stages that do not
   begin with a letter rather than emitting names Google rejects.
@@ -79,6 +86,15 @@ equivalent.
 - Serverless network endpoint groups must be co-located with their Cloud Run
   service, so the edge components read the service's own location instead of
   assuming the project default region.
+- Cloud Run services placed behind an HTTPS load balancer or CDN must use
+  `internalLoadBalancer` ingress. Edge components reject the default public
+  ingress rather than exposing the generated `run.app` hostname as a path
+  around the edge policy.
+- GCP edge addresses are published as A records for every DNS provider. A
+  `GCP.DNS` value references an existing Cloud DNS managed zone, while its
+  general alias operation emits a CNAME for hostname targets.
+- CDN path prefixes are normalized to `/*` rules, certificate physical names
+  include the hostname digest, and every Cloud Run origin uses its own region.
 - API Gateway configurations are immutable. The config id embeds a digest of
   the document and backend service-account identity so either change creates a
   new config and repoints the gateway instead of recreating an in-use id.
@@ -99,7 +115,11 @@ equivalent.
   `(default)` database remains available only through an explicit `databaseID`.
 - Infrastructure-managed Pub/Sub subscriptions never expire unless callers opt
   into an inactivity duration. All protobuf duration strings preserve
-  fractional seconds rather than truncating to whole seconds.
+  fractional seconds, rounding floating-point representation residue to the
+  nearest nanosecond rather than trapping.
+- Subscription retry backoff is capped at 600 seconds. Dead-letter policies
+  create the Pub/Sub service-agent publisher and subscriber grants required for
+  forwarding to work.
 - Eventarc custom transport topics are accepted only for Pub/Sub
   `messagePublished` triggers, matching the Google API contract.
 - Cloud CDN policies include an explicit signed-URL cache age so the Pulumi
@@ -109,12 +129,26 @@ equivalent.
   deployment that pushes an image.
 - API Gateway is document-driven on GCP. It accepts OpenAPI or gRPC service
   configuration rather than copying the AWS route-builder API.
+- API Gateway text documents use Pulumi's `fn::toBase64` intrinsic so Output
+  interpolation resolves before encoding.
 - Cloud Tasks is an HTTP task queue, not a subscription abstraction. The
   component owns queue policy and target authentication; applications still
   create each task and its request payload through the Cloud Tasks API.
 - Firestore and Spanner cover the document and globally distributed relational
   data categories, but intentionally expose their native schemas rather than
   imitating DynamoDB or DSQL types.
+- Spanner display names and processing-unit increments are validated against
+  their API contracts before generation.
+- Cloud SQL validates viable public/private connectivity, regional backup
+  requirements, engine-specific binary logging, and engine family from
+  `databaseVersion`. IAM database users are created only when IAM
+  authentication is enabled, and provider-generated instance names permit
+  replacement after Google's deleted-name retention window.
+- VPC-dependent Cloud SQL, replicas, Redis, and Cloud NAT follow their private
+  service connection and subnet region. Firewall ingress requires a source and
+  emits only the current `logConfig` shape.
+- Redis and Eventarc omit unsupported provider properties. Storage Eventarc
+  triggers grant the Storage service agent Pub/Sub publishing access.
 - The provider does not create secret payload versions or encode
   application-specific Pulumi policy. Those require explicit secret-input and
   policy contracts.
@@ -125,6 +159,12 @@ equivalent.
 - The GCS home provider shells out through Swift Cloud's existing subprocess
   boundary to the authenticated `gcloud storage` CLI. It does not add a second
   GCP authentication implementation to the framework.
+- Home reads fail closed: only a provider-confirmed missing item may create a
+  new passphrase or start from absent state. GCS bootstrap tolerates a verified
+  concurrent bucket-create winner, and authentication, authorization,
+  transport, or executable failures propagate without overwriting state.
+- Pulumi inherits the caller's `PATH`, allowing Docker credential helpers from
+  Homebrew and Google Cloud SDK installations to remain discoverable.
 - There is no native Swift runtime for Cloud Run functions. Swift functions
   should be deployed as containerized Cloud Run services or jobs, so a
   `GCP.Function` facade would misrepresent the deployment model.
@@ -164,8 +204,11 @@ equivalent.
 ## Validation
 
 - Formatted all changed Swift sources with `swift-format`.
-- Built all package products with the Swift 6.3.3 release toolchain.
-- Ran the complete test suite with Swift 6.3.3: 58 tests in 18 suites passed.
+- Built all package products with the Swift 6.3 release toolchain.
+- Ran the complete test suite with Swift 6.3: 88 tests in 19 suites passed,
+  including fail-closed home state, provider scoping, Pulumi interpolation,
+  deployment ordering, edge ingress and DNS, schema-shape, duration, Cloud SQL,
+  Pub/Sub, and Spanner regressions.
 - Encoded a production deployment fixture containing more than 90 resources
   and verified that every Pulumi logical name is unique.
 - Exercised GCS home bootstrap and JSON round trips through an injected,

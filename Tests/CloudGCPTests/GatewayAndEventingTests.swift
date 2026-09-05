@@ -29,7 +29,8 @@ struct GatewayAndEventingTests {
         let documents = try #require(configuration["openapiDocuments"] as? [[String: Any]])
         let document = try #require(documents.first?["document"] as? [String: Any])
         #expect(document["path"] as? String == "openapi.yaml")
-        #expect(document["contents"] as? String == Data("openapi: 3.0.0".utf8).base64EncodedString())
+        let encodedOpenAPI = try #require(document["contents"] as? [String: Any])
+        #expect(encodedOpenAPI["fn::toBase64"] as? String == "openapi: 3.0.0")
 
         let tokenCreator = try properties(type: "gcp:serviceaccount:IAMMember", in: context)
         #expect(tokenCreator["role"] as? String == "roles/iam.serviceAccountTokenCreator")
@@ -64,10 +65,10 @@ struct GatewayAndEventingTests {
         )
         let managedConfiguration = try #require(managedConfigurations.first)
         #expect(managedConfiguration["path"] as? String == "api_config.yaml")
-        #expect(
-            managedConfiguration["contents"] as? String
-                == Data(serviceConfiguration.utf8).base64EncodedString()
+        let encodedConfiguration = try #require(
+            managedConfiguration["contents"] as? [String: Any]
         )
+        #expect(encodedConfiguration["fn::toBase64"] as? String == serviceConfiguration)
     }
 
     @Test("Eventarc and Cloud Tasks authorize their Cloud Run destinations")
@@ -89,7 +90,6 @@ struct GatewayAndEventingTests {
             target: .cloudRun(service, path: "/events"),
             serviceAccount: eventIdentity,
             transportTopic: transport,
-            maximumDeliveryAttempts: 1,
             context: context
         )
         _ = GCP.EventarcTrigger(
@@ -124,8 +124,7 @@ struct GatewayAndEventingTests {
         let destination = try #require(trigger["destination"] as? [String: Any])
         let cloudRun = try #require(destination["cloudRunService"] as? [String: Any])
         #expect(cloudRun["path"] as? String == "/events")
-        let retryPolicy = try #require(trigger["retryPolicy"] as? [String: Any])
-        #expect(retryPolicy["maxAttempts"] as? Int == 1)
+        #expect(trigger["retryPolicy"] == nil)
 
         let queue = try properties(type: "gcp:cloudtasks:Queue", in: context)
         let limits = try #require(queue["rateLimits"] as? [String: Any])
@@ -267,5 +266,41 @@ struct GatewayAndEventingTests {
                 && $0.chosenName.contains("roles-eventarc-event-receiver")
         }
         #expect(grants.count == 1)
+        let storagePublishers = context.store.resources.filter {
+            $0.type == "gcp:projects:IAMMember"
+                && $0.chosenName.contains("storage-googleapis-com-service-identity-pubsub-publisher")
+        }
+        #expect(storagePublishers.count == 1)
+        #expect(
+            context.store.resources.filter {
+                $0.type == "gcp:projects:ServiceIdentity"
+                    && $0.chosenName == "storage-googleapis-com-service-identity"
+            }.count == 1
+        )
+    }
+
+    @Test("OpenAPI backend outputs remain visible to Pulumi before base64 encoding")
+    func openAPIOutputInterpolation() throws {
+        let context = makeContext()
+        let gatewayIdentity = GCP.ServiceAccount("gateway-identity", context: context)
+        let service = GCP.CloudRunService(
+            "backend",
+            image: "us-docker.pkg.dev/example/backend:latest",
+            context: context
+        )
+        let document = "openapi: 3.0.0\nx-google-backend:\n  address: \(service.url)"
+        _ = GCP.APIGateway(
+            "public-api",
+            document: .openAPI(contents: document),
+            serviceAccount: gatewayIdentity,
+            backends: [service],
+            context: context
+        )
+
+        let configuration = try properties(type: "gcp:apigateway:ApiConfig", in: context)
+        let documents = try #require(configuration["openapiDocuments"] as? [[String: Any]])
+        let openAPI = try #require(documents.first?["document"] as? [String: Any])
+        let contents = try #require(openAPI["contents"] as? [String: Any])
+        #expect((contents["fn::toBase64"] as? String)?.contains("${testing-backend.uri}") == true)
     }
 }

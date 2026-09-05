@@ -127,12 +127,7 @@ extension Pulumi.Client {
             try await setup()
         }
 
-        var environment = Files.currentEnvironment()
-        environment["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        environment["PULUMI_CONFIG_PASSPHRASE"] = self.passphrase
-        environment["PULUMI_SKIP_UPDATE_CHECK"] = "true"
-        environment["PULUMI_EXPERIMENTAL"] = "true"
-        environment["PULUMI_SKIP_CONFIRMATIONS"] = "true"
+        let environment = environment(base: Files.currentEnvironment())
 
         let (stdout, _) = try await shellOut(
             to: .path(.init(executablePath)),
@@ -143,6 +138,16 @@ extension Pulumi.Client {
         )
 
         return stdout
+    }
+
+    func environment(base: [String: String]) -> [String: String] {
+        var environment = base
+        environment["PULUMI_CONFIG_PASSPHRASE"] = self.passphrase
+        environment["PULUMI_SKIP_UPDATE_CHECK"] = "true"
+        environment["PULUMI_EXPERIMENTAL"] = "true"
+        environment["PULUMI_SKIP_CONFIRMATIONS"] = "true"
+
+        return environment
     }
 }
 

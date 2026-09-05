@@ -35,7 +35,6 @@ extension GCP {
             origins: [Origin],
             domainName: DomainName,
             policy: HTTPSLoadBalancer.CDN = .enabled(),
-            location: Region? = nil,
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
@@ -54,7 +53,6 @@ extension GCP {
             }
 
             self.domainName = domainName
-            let regionOverride = location.map { AnyEncodable($0.rawValue) }
             var endpointGroups: [Resource] = []
             var endpoints: [Resource] = []
             var backends: [Resource] = []
@@ -88,6 +86,10 @@ extension GCP {
                     backends.append(backend)
 
                 case .cloudRun(let service):
+                    precondition(
+                        service.ingress == .internalLoadBalancer,
+                        "CDN-backed Cloud Run services require internalLoadBalancer ingress"
+                    )
                     service.makePublic()
                     let endpointGroup = Resource(
                         name: "\(originName)-neg",
@@ -104,7 +106,7 @@ extension GCP {
                             ),
                             // A serverless NEG must live in the same region as its
                             // Cloud Run service, which may differ per origin.
-                            "region": regionOverride ?? AnyEncodable(service.location),
+                            "region": service.location,
                             "networkEndpointType": "SERVERLESS",
                             "cloudRun": ["service": service.name],
                         ],
@@ -209,7 +211,7 @@ extension GCP {
                     return nil
                 }
                 return [
-                    "paths": [origin.path],
+                    "paths": [origin.urlMapPath],
                     "service": backends[offset].id,
                 ]
             }
@@ -239,7 +241,13 @@ extension GCP {
                 type: "gcp:compute:ManagedSslCertificate",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name, "certificate", maxLength: 63),
+                    "name": tokenize(
+                        context.gcpStage,
+                        name,
+                        "certificate",
+                        digest(domainName.hostname),
+                        maxLength: 63
+                    ),
                     "managed": ["domains": [domainName.hostname]],
                 ],
                 options: options,
@@ -289,7 +297,8 @@ extension GCP {
                 context: context
             )
 
-            dnsRecord = domainName.dns.createAlias(
+            dnsRecord = domainName.dns.createRecord(
+                type: .a,
                 name: domainName.hostname,
                 target: address.output.keyPath("address"),
                 ttl: .seconds(300)
@@ -325,6 +334,13 @@ extension GCP.CDN {
 
         fileprivate var isDefault: Bool {
             path == "*" || path == "/*"
+        }
+
+        fileprivate var urlMapPath: String {
+            guard isDefault == false, path.hasSuffix("/*") == false else {
+                return path
+            }
+            return "\(path.hasSuffix("/") ? String(path.dropLast()) : path)/*"
         }
 
         fileprivate func validate() {

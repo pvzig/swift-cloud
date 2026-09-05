@@ -98,7 +98,7 @@ extension GCP {
                 type: "gcp:apigateway:Gateway",
                 properties: [
                     "project": context.gcpProjectID,
-                    "region": (location ?? context.gcpRegion).rawValue,
+                    "region": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "gatewayId": apiID,
                     "displayName": displayName,
                     "apiConfig": configuration.id,
@@ -142,7 +142,7 @@ extension GCP.APIGateway {
                     [
                         "document": [
                             "path": path,
-                            "contents": Data(contents.utf8).base64EncodedString(),
+                            "contents": ["fn::toBase64": contents],
                         ]
                     ]
                 ]
@@ -171,7 +171,7 @@ extension GCP.APIGateway {
                 [
                     [
                         "path": configurationPath,
-                        "contents": Data(serviceConfiguration.utf8).base64EncodedString(),
+                        "contents": ["fn::toBase64": serviceConfiguration],
                     ]
                 ]
             case .openAPI:

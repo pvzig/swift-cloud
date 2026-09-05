@@ -14,7 +14,7 @@ extension GCP {
         public var runURI: Output<String> {
             let location = job.output.keyPath("location") as Output<String>
             return
-                "https://run.googleapis.com/v2/projects/\(job.context.gcpProjectID)/locations/\(location)/jobs/\(name):run"
+                "https://run.googleapis.com/v2/projects/\(job.gcpProjectID)/locations/\(location)/jobs/\(name):run"
         }
 
         public init(
@@ -47,7 +47,7 @@ extension GCP {
                 (.seconds(1)...Duration.seconds(604_800)).contains(timeout),
                 "timeout must be between 1 second and 7 days"
             )
-            precondition([1, 2, 4, 6, 8].contains(cpu), "cpu must be one of 1, 2, 4, 6, or 8")
+            CloudRunService.validateResourceLimits(cpu: cpu, memory: memory)
             CloudRunService.validateSecretEnvironment(secretEnvironment)
 
             self.serviceAccount = serviceAccount
@@ -60,7 +60,7 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "name": jobName,
-                    "location": (location ?? context.gcpRegion).rawValue,
+                    "location": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "deletionProtection": deletionProtection,
                     "template": [
                         "taskCount": taskCount,
@@ -106,7 +106,7 @@ extension GCP.CloudRunJob {
     /// Grants a service account permission to execute this job.
     @discardableResult
     public func allowExecution(from serviceAccount: GCP.ServiceAccount) -> Self {
-        _ = Resource(
+        _ = GCP.sharedResource(
             name: "\(job.chosenName)-invoker-\(serviceAccount.resource.chosenName)",
             type: "gcp:cloudrunv2:JobIamMember",
             properties: [
@@ -124,7 +124,7 @@ extension GCP.CloudRunJob {
 }
 
 extension GCP.CloudRunJob: EnvironmentProvider, GCPRoleProvider {
-    public var gcpResource: Resource? {
+    public var gcpResource: Resource {
         job
     }
 

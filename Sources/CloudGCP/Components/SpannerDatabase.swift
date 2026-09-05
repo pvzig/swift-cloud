@@ -49,10 +49,6 @@ extension GCP.Spanner.Database {
 }
 
 extension GCP.Spanner.Database: GCPLinkable {
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        _ = accessGrants(to: serviceAccount)
-    }
-
     public var actions: [String] {
         [GCP.IAMRole.spannerDatabaseUser.rawValue]
     }
@@ -68,13 +64,13 @@ extension GCP.Spanner.Database: GCPLinkable {
             properties: [
                 "name": name,
                 "instance": instance.name,
-                "project_id": database.context.gcpProjectID,
+                "project_id": database.gcpProjectID,
             ]
         )
     }
 
     public func accessGrants(to serviceAccount: GCP.ServiceAccount) -> [any ResourceProvider] {
-        let grant = Resource(
+        let grant = GCP.sharedResource(
             name: "\(database.chosenName)-database-user-\(serviceAccount.resource.chosenName)",
             type: "gcp:spanner:DatabaseIAMMember",
             properties: [

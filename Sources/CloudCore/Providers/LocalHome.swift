@@ -17,6 +17,15 @@ public struct LocalHome: HomeProvider {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    public func isItemNotFoundError(_ error: any Error) -> Bool {
+        let cocoaError = error as NSError
+        return cocoaError.domain == NSCocoaErrorDomain
+            && [
+                CocoaError.fileNoSuchFile.rawValue,
+                CocoaError.fileReadNoSuchFile.rawValue,
+            ].contains(cocoaError.code)
+    }
+
     private func dataFilePath(_ fileName: String, with context: Context) -> String {
         "\(Context.userCloudDirectory)/projects/\(contextualFileName(fileName, with: context))"
     }

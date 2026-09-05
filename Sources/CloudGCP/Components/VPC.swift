@@ -7,6 +7,7 @@ extension GCP {
         public let subnetwork: Resource
         public let privateAddress: Resource
         public let privateServiceConnection: Resource
+        public let location: Region
 
         public var name: Output<String> {
             network.name
@@ -24,6 +25,8 @@ extension GCP {
                 (8...29).contains(privateServicePrefixLength),
                 "privateServicePrefixLength must be between 8 and 29"
             )
+
+            self.location = GCP.resolvedRegion(location, options: options, context: context)
 
             network = Resource(
                 name: name,
@@ -44,7 +47,7 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "name": tokenize(context.gcpStage, name, "subnet", maxLength: 63),
-                    "region": (location ?? context.gcpRegion).rawValue,
+                    "region": self.location.rawValue,
                     "network": network.id,
                     "ipCidrRange": subnetCIDR,
                     "privateIpGoogleAccess": true,

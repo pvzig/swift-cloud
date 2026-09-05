@@ -24,7 +24,7 @@ extension GCP {
                 type: "gcp:artifactregistry:Repository",
                 properties: [
                     "project": context.gcpProjectID,
-                    "location": (location ?? context.gcpRegion).rawValue,
+                    "location": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "repositoryId": tokenize(context.gcpStage, name, maxLength: 63),
                     "description": description,
                     "format": "DOCKER",

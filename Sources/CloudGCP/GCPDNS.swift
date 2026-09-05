@@ -8,25 +8,20 @@ extension GCP {
         public init(
             _ name: String,
             zoneName: String,
-            dnssecEnabled: Bool = true,
-            forceDestroy: Bool = false,
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
             self.zoneName = zoneName
+            let projectID =
+                (options?.provider as? GCP.Provider)?.projectID
+                ?? context.gcpProjectID
             zone = Resource(
                 name: name,
                 type: "gcp:dns:ManagedZone",
-                properties: [
-                    "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name, maxLength: 63),
-                    "dnsName": zoneName.hasSuffix(".") ? zoneName : "\(zoneName).",
-                    "visibility": "public",
-                    "dnssecConfig": ["state": dnssecEnabled ? "on" : "off"],
-                    "forceDestroy": forceDestroy,
-                ],
+                properties: nil,
                 options: options,
-                context: context
+                context: context,
+                existingId: "projects/\(projectID)/managedZones/\(name)"
             )
         }
 
@@ -52,7 +47,7 @@ extension GCP {
             target: any Input<String>,
             ttl: Duration
         ) -> DNSProviderRecord {
-            createRecord(type: .a, name: name, target: target, ttl: ttl)
+            createRecord(type: .cname, name: name, target: target, ttl: ttl)
         }
     }
 }
@@ -61,16 +56,12 @@ extension DNSProvider where Self == GCP.DNS {
     public static func gcp(
         _ name: String,
         zoneName: String,
-        dnssecEnabled: Bool = true,
-        forceDestroy: Bool = false,
         options: Resource.Options? = nil,
         context: Context = .current
     ) -> Self {
         .init(
             name,
             zoneName: zoneName,
-            dnssecEnabled: dnssecEnabled,
-            forceDestroy: forceDestroy,
             options: options,
             context: context
         )

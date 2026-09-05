@@ -51,14 +51,7 @@ extension GCP.ServiceAccount {
     @discardableResult
     public func projectRole(_ role: GCP.IAMRole) -> Resource {
         let roleName = "\(resource.chosenName)-\(tokenize(role.rawValue))-project-role"
-        if let existing = resource.context.store.resource(
-            type: "gcp:projects:IAMMember",
-            chosenName: roleName
-        ) {
-            return existing
-        }
-
-        return Resource(
+        return GCP.sharedResource(
             name: roleName,
             type: "gcp:projects:IAMMember",
             properties: [
@@ -94,14 +87,7 @@ extension GCP.ServiceAccount {
             digest(member),
             "service-account-role"
         )
-        if let existing = resource.context.store.resource(
-            type: "gcp:serviceaccount:IAMMember",
-            chosenName: bindingName
-        ) {
-            return existing
-        }
-
-        return Resource(
+        return GCP.sharedResource(
             name: bindingName,
             type: "gcp:serviceaccount:IAMMember",
             properties: [

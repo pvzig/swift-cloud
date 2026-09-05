@@ -19,12 +19,13 @@ extension GCP.Compute {
         project: String? = nil,
         context: Context = .current
     ) -> Output<GetNetwork> {
-        Variable<GetNetwork>.invoke(
-            name: "\(name)-network",
+        let project = project ?? context.gcpProjectID
+        return Variable<GetNetwork>.invoke(
+            name: "\(name)-\(digest(name, project))-network",
             function: "gcp:compute:getNetwork",
             arguments: [
                 "name": name,
-                "project": project ?? context.gcpProjectID,
+                "project": project,
             ],
             context: context
         ).output

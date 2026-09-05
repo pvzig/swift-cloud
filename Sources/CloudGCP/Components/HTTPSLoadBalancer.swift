@@ -38,11 +38,14 @@ extension GCP {
             service: CloudRunService,
             domainName: DomainName,
             cdn: CDN = .disabled,
-            location: Region? = nil,
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
             self.domainName = domainName
+            precondition(
+                service.ingress == .internalLoadBalancer,
+                "load-balanced Cloud Run services require internalLoadBalancer ingress"
+            )
             service.makePublic()
 
             networkEndpointGroup = Resource(
@@ -53,7 +56,7 @@ extension GCP {
                     "name": tokenize(context.gcpStage, name, "neg", maxLength: 63),
                     // A serverless NEG must live in the same region as its Cloud
                     // Run service, which may not be the project's default region.
-                    "region": location.map { AnyEncodable($0.rawValue) } ?? AnyEncodable(service.location),
+                    "region": service.location,
                     "networkEndpointType": "SERVERLESS",
                     "cloudRun": ["service": service.name],
                 ],
@@ -96,7 +99,13 @@ extension GCP {
                 type: "gcp:compute:ManagedSslCertificate",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name, "certificate", maxLength: 63),
+                    "name": tokenize(
+                        context.gcpStage,
+                        name,
+                        "certificate",
+                        digest(domainName.hostname),
+                        maxLength: 63
+                    ),
                     "managed": ["domains": [domainName.hostname]],
                 ],
                 options: options,
@@ -146,7 +155,8 @@ extension GCP {
                 context: context
             )
 
-            dnsRecord = domainName.dns.createAlias(
+            dnsRecord = domainName.dns.createRecord(
+                type: .a,
                 name: domainName.hostname,
                 target: address.output.keyPath("address"),
                 ttl: .seconds(300)

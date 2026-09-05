@@ -45,9 +45,8 @@ struct StorageAndLinkingTests {
         #expect(types.contains("gcp:sql:User"))
         #expect(service.environment.values.count >= 13)
 
-        let trackedService = try resource(type: "gcp:cloudrunv2:Service", in: context)
         let dependencies = try #require(
-            trackedService.pulumiProjectResources().values.first?.options?.dependsOn
+            service.service.pulumiProjectResources().values.first?.options?.dependsOn
         )
         let dependencyNames = Set(dependencies.map(\.description))
         let grantTypes: Set = [
@@ -78,5 +77,97 @@ struct StorageAndLinkingTests {
         let secret = try properties(type: "gcp:secretmanager:Secret", in: context)
         #expect(secret["deletionProtection"] as? Bool == true)
         #expect(secret["replication"] != nil)
+    }
+
+    @Test("Direct resource access helpers create their IAM grants")
+    func directAccessHelpers() {
+        let context = makeContext()
+        let identity = GCP.ServiceAccount("worker", context: context)
+        let bucket = GCP.Bucket("assets", context: context)
+            .allowObjectAccess(from: identity)
+        let secret = GCP.Secret("api-key", context: context)
+            .allowAccess(from: identity)
+        let topic = GCP.Topic("events", context: context)
+        let subscription = GCP.Subscription(
+            "events-worker",
+            topic: topic,
+            context: context
+        ).allowConsuming(from: identity)
+
+        #expect(bucket.name.description == "${testing-assets.name}")
+        #expect(secret.secretID.description == "${testing-api-key.secretId}")
+        #expect(subscription.name.description == "${testing-events-worker.name}")
+        #expect(
+            context.store.resources.filter {
+                $0.type == "gcp:storage:BucketIAMMember"
+            }.count == 1
+        )
+        #expect(
+            context.store.resources.filter {
+                $0.type == "gcp:secretmanager:SecretIamMember"
+            }.count == 1
+        )
+        #expect(
+            context.store.resources.filter {
+                $0.type == "gcp:pubsub:SubscriptionIAMMember"
+            }.count == 1
+        )
+    }
+
+    @Test("Targeted queues and push subscriptions do not create link dependency cycles")
+    func targetLinks() throws {
+        let context = makeContext()
+        let runtime = GCP.ServiceAccount("backend", context: context)
+        let dispatcher = GCP.ServiceAccount("dispatcher", context: context)
+        let service = GCP.CloudRunService(
+            "backend",
+            image: "us-docker.pkg.dev/example/backend:latest",
+            serviceAccount: runtime,
+            context: context
+        )
+        let queue = GCP.TaskQueue(
+            "jobs",
+            target: .cloudRun(service, serviceAccount: dispatcher),
+            context: context
+        )
+        let topic = GCP.Topic("events", context: context)
+        let subscription = GCP.Subscription(
+            "events-push",
+            topic: topic,
+            delivery: .push(
+                endpoint: service.url,
+                serviceAccount: dispatcher,
+                audience: service.url
+            ),
+            context: context
+        )
+
+        service.link(queue, subscription)
+
+        let dependencies =
+            service.service.pulumiProjectResources()
+            .values.first?.options?.dependsOn ?? []
+        let names = Set(dependencies.map(\.description))
+        #expect(names.contains("${testing-jobs-enqueuer-backend-service-account}") == false)
+        #expect(names.contains("${testing-events-push-subscriber-backend-service-account}") == false)
+        #expect(context.store.resources.contains { $0.type == "gcp:cloudtasks:QueueIamMember" })
+        #expect(context.store.resources.contains { $0.type == "gcp:pubsub:SubscriptionIAMMember" })
+    }
+
+    @Test("linkTo grants access and injects environment metadata")
+    func reverseLinkSyntax() {
+        let context = makeContext()
+        let runtime = GCP.ServiceAccount("backend", context: context)
+        let service = GCP.CloudRunService(
+            "backend",
+            image: "us-docker.pkg.dev/example/backend:latest",
+            serviceAccount: runtime,
+            context: context
+        )
+        let bucket = GCP.Bucket("assets", context: context).linkTo(service)
+
+        #expect(service.environment.values.keys.contains("BUCKET_ASSETS_NAME"))
+        #expect(bucket.name.description == "${testing-assets.name}")
+        #expect(context.store.resources.contains { $0.type == "gcp:storage:BucketIAMMember" })
     }
 }

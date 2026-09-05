@@ -13,6 +13,13 @@ public struct HomeProviderPassphrase: HomeProviderItem {
 public protocol HomeProvider: Sendable {
     func bootstrap(with context: Context) async throws
 
+    /// Returns whether `error` means that a requested home item does not exist.
+    ///
+    /// Providers must distinguish absence from authentication, authorization,
+    /// transport, and tooling failures. Swift Cloud only creates replacement
+    /// state for an item that is known to be absent.
+    func isItemNotFoundError(_ error: any Error) -> Bool
+
     func passphrase(with context: Context) async throws -> String
 
     func putItem<T: HomeProviderItem>(_ item: T, fileName: String, with context: Context) async throws
@@ -21,16 +28,23 @@ public protocol HomeProvider: Sendable {
 }
 
 extension HomeProvider {
+    public func isItemNotFoundError(_ error: any Error) -> Bool {
+        false
+    }
+
     public func passphrase(with context: Context) async throws -> String {
         let fileName = "passphrase"
-        // First we'll look for a password in the home bucket
-        if let password: HomeProviderPassphrase = try? await getItem(fileName: fileName, with: context) {
+        do {
+            let password: HomeProviderPassphrase = try await getItem(
+                fileName: fileName,
+                with: context
+            )
             return password.password
+        } catch let error where isItemNotFoundError(error) {
+            let passphrase = try HomeProviderPassphrase()
+            try await putItem(passphrase, fileName: fileName, with: context)
+            return passphrase.password
         }
-        // If we don't have a password, we'll generate a new one
-        let passphrase = try HomeProviderPassphrase()
-        try await putItem(passphrase, fileName: fileName, with: context)
-        return passphrase.password
     }
 }
 
@@ -50,11 +64,15 @@ extension HomeProvider {
     }
 
     internal func pullState(context: Context) async throws {
-        let state: AnyCodable = try await getItem(fileName: "state", with: context)
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        let data = try encoder.encode(state)
-        try Files.createFile(atPath: localStatePath(context: context), contents: data)
+        do {
+            let state: AnyCodable = try await getItem(fileName: "state", with: context)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let data = try encoder.encode(state)
+            try Files.createFile(atPath: localStatePath(context: context), contents: data)
+        } catch let error where isItemNotFoundError(error) {
+            return
+        }
     }
 
     internal func pushState(context: Context) async throws {

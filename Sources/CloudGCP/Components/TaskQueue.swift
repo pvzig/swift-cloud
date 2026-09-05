@@ -4,6 +4,7 @@ extension GCP {
     /// A Cloud Tasks queue for asynchronous, push-oriented work.
     public struct TaskQueue: GCPComponent {
         public let queue: Resource
+        public let ordersConsumerAfterAccessGrants: Bool
 
         public var name: Output<String> {
             queue.name
@@ -31,13 +32,19 @@ extension GCP {
             rateLimits.validate()
             retry.validate()
             target?.grantInvocation()
+            switch target {
+            case nil:
+                ordersConsumerAfterAccessGrants = true
+            case .some:
+                ordersConsumerAfterAccessGrants = false
+            }
 
             queue = Resource(
                 name: name,
                 type: "gcp:cloudtasks:Queue",
                 properties: [
                     "project": context.gcpProjectID,
-                    "location": (location ?? context.gcpRegion).rawValue,
+                    "location": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "name": tokenize(context.gcpStage, name, maxLength: 100),
                     "desiredState": state.rawValue,
                     "rateLimits": rateLimits.properties,
@@ -178,7 +185,7 @@ extension GCP.TaskQueue {
     }
 
     private func enqueuerGrant(for serviceAccount: GCP.ServiceAccount) -> Resource {
-        Resource(
+        GCP.sharedResource(
             name: "\(queue.chosenName)-enqueuer-\(serviceAccount.resource.chosenName)",
             type: "gcp:cloudtasks:QueueIamMember",
             properties: [
@@ -195,10 +202,6 @@ extension GCP.TaskQueue {
 }
 
 extension GCP.TaskQueue: GCPLinkable {
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        _ = accessGrants(to: serviceAccount)
-    }
-
     public var actions: [String] {
         [GCP.IAMRole.cloudTasksEnqueuer.rawValue]
     }

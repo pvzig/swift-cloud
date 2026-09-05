@@ -32,7 +32,7 @@ extension GCP {
                 type: "gcp:cloudscheduler:Job",
                 properties: [
                     "project": context.gcpProjectID,
-                    "region": (location ?? context.gcpRegion).rawValue,
+                    "region": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "name": tokenize(context.gcpStage, name, maxLength: 500),
                     "schedule": schedule,
                     "timeZone": timeZone,

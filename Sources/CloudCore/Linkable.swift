@@ -26,7 +26,7 @@ public struct LinkProperties: Sendable {
     }
 
     func environmentKey(_ key: String) -> String {
-        return Environment.toKey("\(type) \(name) \(key)")
+        return Environment.key(from: "\(type) \(name) \(key)")
     }
 }
 

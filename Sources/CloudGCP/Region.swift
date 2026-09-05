@@ -1,5 +1,5 @@
 extension GCP {
-    public struct Region: RawRepresentable, Sendable, ExpressibleByStringLiteral {
+    public struct Region: Equatable, RawRepresentable, Sendable, ExpressibleByStringLiteral {
         public let rawValue: String
 
         public init(rawValue: String) {

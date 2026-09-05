@@ -40,14 +40,34 @@ extension GCP {
                 where stderr.localizedCaseInsensitiveContains("not found")
                 || stderr.localizedCaseInsensitiveContains("404")
             {
-                _ = try await runCommand([
-                    "--quiet", "storage", "buckets", "create", storageURL,
-                    "--project", projectID,
-                    "--location", location.rawValue,
-                    "--uniform-bucket-level-access",
-                    "--public-access-prevention",
-                ])
+                do {
+                    _ = try await runCommand([
+                        "--quiet", "storage", "buckets", "create", storageURL,
+                        "--project", projectID,
+                        "--location", location.rawValue,
+                        "--uniform-bucket-level-access",
+                        "--public-access-prevention",
+                    ])
+                } catch let ShellError.terminated(_, createError)
+                    where createError.localizedCaseInsensitiveContains("already exists")
+                    || createError.localizedCaseInsensitiveContains("409")
+                {
+                    // Another bootstrap may have won the create race. Describing
+                    // the bucket proves this identity can access the winner.
+                    _ = try await runCommand([
+                        "storage", "buckets", "describe", storageURL,
+                        "--project", projectID,
+                    ])
+                }
             }
+        }
+
+        public func isItemNotFoundError(_ error: any Error) -> Bool {
+            guard case ShellError.terminated(_, let stderr) = error else {
+                return false
+            }
+            return stderr.localizedCaseInsensitiveContains("not found")
+                || stderr.localizedCaseInsensitiveContains("404")
         }
 
         public func putItem<T: HomeProviderItem>(

@@ -12,6 +12,7 @@ extension GCP {
         public let database: Resource
         public let readReplicas: [Resource]
         public let databaseName: String
+        public let iamAuthenticationEnabled: Bool
 
         public var name: Output<String> {
             database.name
@@ -44,6 +45,18 @@ extension GCP {
         ) {
             precondition(readReplicaCount >= 0, "readReplicaCount must not be negative")
             precondition(
+                publicIPv4 != false || vpc != nil,
+                "disabling public IPv4 requires a VPC for private connectivity"
+            )
+            precondition(
+                availability != .regional || backupsEnabled,
+                "regional Cloud SQL instances require backups"
+            )
+            precondition(
+                availability != .regional || engine.isMySQL == false || pointInTimeRecoveryEnabled,
+                "regional MySQL instances require pointInTimeRecoveryEnabled for binary logging"
+            )
+            precondition(
                 readReplicaCount == 0 || backupsEnabled,
                 "read replicas require backups"
             )
@@ -55,6 +68,7 @@ extension GCP {
             )
             self.engine = engine
             self.databaseName = databaseName ?? tokenize(context.gcpStage, "app", maxLength: 63)
+            self.iamAuthenticationEnabled = iamAuthenticationEnabled
             let ipv4Enabled = publicIPv4 ?? (vpc == nil)
             let privateDependencies: [any ResourceProvider] =
                 vpc.map { [$0.privateServiceConnection] } ?? []
@@ -64,8 +78,7 @@ extension GCP {
                 type: "gcp:sql:DatabaseInstance",
                 properties: [
                     "project": context.gcpProjectID,
-                    "name": tokenize(context.gcpStage, name, maxLength: 98),
-                    "region": (location ?? context.gcpRegion).rawValue,
+                    "region": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "databaseVersion": engine.databaseVersion,
                     "settings": [
                         "tier": tier,
@@ -77,7 +90,7 @@ extension GCP {
                                     "value": "on",
                                 ]
                             ]
-                            : [],
+                            : nil,
                         "ipConfiguration": [
                             "ipv4Enabled": ipv4Enabled,
                             "privateNetwork": AnyEncodable(vpc?.network.id),
@@ -120,14 +133,11 @@ extension GCP {
                     type: "gcp:sql:DatabaseInstance",
                     properties: [
                         "project": context.gcpProjectID,
-                        "name": tokenize(
-                            context.gcpStage,
-                            name,
-                            "read",
-                            "\(index + 1)",
-                            maxLength: 98
-                        ),
-                        "region": (location ?? context.gcpRegion).rawValue,
+                        "region": GCP.resolvedRegion(
+                            location,
+                            options: options,
+                            context: context
+                        ).rawValue,
                         "databaseVersion": engine.databaseVersion,
                         "masterInstanceName": primaryInstance.name,
                         "settings": [
@@ -139,7 +149,7 @@ extension GCP {
                                         "value": "on",
                                     ]
                                 ]
-                                : [],
+                                : nil,
                             "ipConfiguration": [
                                 "ipv4Enabled": ipv4Enabled,
                                 "privateNetwork": AnyEncodable(vpc?.network.id),
@@ -164,11 +174,11 @@ extension GCP.SQLDatabase {
         public let scheme: String
 
         fileprivate var isPostgres: Bool {
-            scheme == "postgres"
+            family == .postgres
         }
 
         fileprivate var isMySQL: Bool {
-            scheme == "mysql"
+            family == .mysql
         }
 
         fileprivate var iamAuthenticationFlag: String {
@@ -176,6 +186,10 @@ extension GCP.SQLDatabase {
         }
 
         public init(databaseVersion: String, port: Int, scheme: String) {
+            precondition(
+                databaseVersion.hasPrefix("POSTGRES_") || databaseVersion.hasPrefix("MYSQL_"),
+                "Cloud SQL supports PostgreSQL or MySQL database versions"
+            )
             self.databaseVersion = databaseVersion
             self.port = port
             self.scheme = scheme
@@ -204,9 +218,18 @@ extension GCP.SQLDatabase {
             port: 5432,
             scheme: "postgres"
         )
+
+        private enum Family {
+            case mysql
+            case postgres
+        }
+
+        private var family: Family {
+            databaseVersion.hasPrefix("POSTGRES_") ? .postgres : .mysql
+        }
     }
 
-    public enum Availability: String, Sendable {
+    public enum Availability: String, Equatable, Sendable {
         case zonal = "ZONAL"
         case regional = "REGIONAL"
     }
@@ -223,29 +246,28 @@ extension GCP.SQLDatabase {
     private func connectionAccessGrants(
         for serviceAccount: GCP.ServiceAccount
     ) -> [any ResourceProvider] {
-        [
-            serviceAccount.projectRole(.cloudSQLClient),
-            serviceAccount.projectRole(.cloudSQLInstanceUser),
-            createIAMUser(for: serviceAccount),
-        ]
+        var grants: [any ResourceProvider] = [serviceAccount.projectRole(.cloudSQLClient)]
+        if iamAuthenticationEnabled {
+            grants.append(serviceAccount.projectRole(.cloudSQLInstanceUser))
+            grants.append(createIAMUser(for: serviceAccount))
+        }
+        return grants
     }
 
     @discardableResult
     public func createIAMUser(for serviceAccount: GCP.ServiceAccount) -> Resource {
+        precondition(
+            iamAuthenticationEnabled,
+            "IAM database users require iamAuthenticationEnabled"
+        )
         let resourceName = "\(instance.chosenName)-iam-user-\(serviceAccount.resource.chosenName)"
-        if let existing = instance.context.store.resource(
-            type: "gcp:sql:User",
-            chosenName: resourceName
-        ) {
-            return existing
-        }
         let username = Strings.trimSuffix(
             serviceAccount.email,
             suffix: ".gserviceaccount.com",
             name: "\(instance.chosenName)-\(serviceAccount.resource.chosenName)-iam-username",
             context: instance.context
         ).result
-        return Resource(
+        return GCP.sharedResource(
             name: resourceName,
             type: "gcp:sql:User",
             properties: [
@@ -262,15 +284,12 @@ extension GCP.SQLDatabase {
 }
 
 extension GCP.SQLDatabase: GCPLinkable {
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        _ = accessGrants(to: serviceAccount)
-    }
-
     public var actions: [String] {
-        [
-            GCP.IAMRole.cloudSQLClient.rawValue,
-            GCP.IAMRole.cloudSQLInstanceUser.rawValue,
-        ]
+        var actions = [GCP.IAMRole.cloudSQLClient.rawValue]
+        if iamAuthenticationEnabled {
+            actions.append(GCP.IAMRole.cloudSQLInstanceUser.rawValue)
+        }
+        return actions
     }
 
     public var resources: [Output<String>] {

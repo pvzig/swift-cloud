@@ -47,7 +47,7 @@ extension GCP.Secret {
     }
 
     private func accessGrant(for serviceAccount: GCP.ServiceAccount) -> Resource {
-        Resource(
+        GCP.sharedResource(
             name: "\(secret.chosenName)-accessor-\(serviceAccount.resource.chosenName)",
             type: "gcp:secretmanager:SecretIamMember",
             properties: [
@@ -63,10 +63,6 @@ extension GCP.Secret {
 }
 
 extension GCP.Secret: GCPLinkable {
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        _ = accessGrants(to: serviceAccount)
-    }
-
     public var actions: [String] {
         [GCP.IAMRole.secretAccessor.rawValue]
     }

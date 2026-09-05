@@ -38,6 +38,10 @@ extension AWS {
             let data = try await response.body.collect(upTo: 1024 * 1024)
             return try JSONDecoder().decode(T.self, from: data)
         }
+
+        public func isItemNotFoundError(_ error: any Swift.Error) -> Bool {
+            (error as? any AWSErrorType)?.errorCode == "NoSuchKey"
+        }
     }
 }
 

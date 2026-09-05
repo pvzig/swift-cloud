@@ -51,14 +51,14 @@ struct CloudRunServiceTests {
         #expect(serviceProperties["name"] as? String == "testing-backend")
         #expect(serviceProperties["location"] as? String == "us-east1")
 
-        let scaling = try #require(serviceProperties["scaling"] as? [String: Any])
-        #expect(scaling["minInstanceCount"] as? Int == 1)
-        #expect(scaling["maxInstanceCount"] as? Int == 4)
-
         let template = try #require(serviceProperties["template"] as? [String: Any])
         #expect(template["serviceAccount"] as? String == "${testing-backend-service-account.email}")
         #expect(template["maxInstanceRequestConcurrency"] as? Int == 40)
         #expect(template["timeout"] as? String == "300.5s")
+        let scaling = try #require(template["scaling"] as? [String: Any])
+        #expect(scaling["minInstanceCount"] as? Int == 1)
+        #expect(scaling["maxInstanceCount"] as? Int == 4)
+        #expect(serviceProperties["scaling"] == nil)
 
         let containers = try #require(template["containers"] as? [[String: Any]])
         #expect(containers.count == 2)
@@ -127,6 +127,18 @@ struct CloudRunServiceTests {
                     .init("API-KEY", secret: "api-key"),
                     .init("API_KEY", secret: "other-api-key"),
                 ],
+                context: makeContext()
+            )
+        }
+    }
+
+    @Test("Cloud Run rejects CPU and memory combinations below the platform minimum")
+    func invalidCPUMemoryPair() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.CloudRunService(
+                "backend",
+                image: "us-docker.pkg.dev/example/backend:latest",
+                cpu: 4,
                 context: makeContext()
             )
         }

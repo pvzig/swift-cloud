@@ -19,8 +19,9 @@ extension GCP {
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
-            resource = Resource(
-                name: name,
+            _ = name
+            resource = GCP.sharedResource(
+                name: "\(tokenize(api.rawValue))-service-identity",
                 type: "gcp:projects:ServiceIdentity",
                 properties: [
                     "project": context.gcpProjectID,
@@ -29,10 +30,6 @@ extension GCP {
                 options: options,
                 context: context
             )
-        }
-
-        private init(resource: Resource) {
-            self.resource = resource
         }
 
         /// Returns the project's service agent for `api`, materializing it once.
@@ -46,13 +43,21 @@ extension GCP {
             context: Context = .current
         ) -> Self {
             let name = "\(tokenize(api.rawValue))-service-identity"
-            if let existing = context.store.resource(
+            let resource = GCP.sharedResource(
+                name: name,
                 type: "gcp:projects:ServiceIdentity",
-                chosenName: name
-            ) {
-                return .init(resource: existing)
-            }
-            return .init(name, service: api, options: options, context: context)
+                properties: [
+                    "project": context.gcpProjectID,
+                    "service": api.rawValue,
+                ],
+                options: options,
+                context: context
+            )
+            return .init(resource: resource)
+        }
+
+        private init(resource: Resource) {
+            self.resource = resource
         }
     }
 }

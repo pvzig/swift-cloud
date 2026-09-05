@@ -73,7 +73,7 @@ extension GCP.Topic {
         member: any Input<String>,
         bindingName: String
     ) -> Resource {
-        Resource(
+        GCP.sharedResource(
             name: "\(topic.chosenName)-publisher-\(bindingName)",
             type: "gcp:pubsub:TopicIAMMember",
             properties: [
@@ -89,10 +89,6 @@ extension GCP.Topic {
 }
 
 extension GCP.Topic: GCPLinkable {
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        _ = accessGrants(to: serviceAccount)
-    }
-
     public var actions: [String] {
         [GCP.IAMRole.pubSubPublisher.rawValue]
     }

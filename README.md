@@ -509,6 +509,24 @@ image, for example `gcloud auth configure-docker us-east1-docker.pkg.dev`.
 project-specific Cloud Storage bucket through the authenticated `gcloud storage`
 command. Override `home` with `.local()` only when local-only state is intentional.
 
+Every GCP infrastructure executable must declare the Google Cloud project ID;
+the region defaults to `us-central1` when omitted:
+
+```swift
+import Cloud
+
+@main
+struct Infrastructure: GCPProject {
+    let projectID = "my-google-cloud-project"
+    let region = GCP.Region.usEast1
+
+    func build() async throws -> Outputs {
+        // Declare resources here.
+        [:]
+    }
+}
+```
+
 Declare the APIs required by your components and use them as dependencies so
 activation completes before Pulumi creates the infrastructure:
 
@@ -829,14 +847,24 @@ let nat = GCP.NATGateway(
 #### HTTPS Load Balancer
 
 This component places a global HTTPS load balancer, managed certificate, and
-DNS record in front of one Cloud Run service.
+DNS record in front of one Cloud Run service. The Cloud DNS zone must already
+exist, and the service must use `internalLoadBalancer` ingress so its `run.app`
+hostname cannot bypass the edge policy.
 
 ```swift
+let edgeService = GCP.CloudRunService(
+    "edge-backend",
+    image: image.reference,
+    serviceAccount: runtimeIdentity,
+    ingress: .internalLoadBalancer
+)
+
+// "example-zone" is the existing Google-managed zone name.
 let dns = GCP.DNS("example-zone", zoneName: "example.com")
 
 let loadBalancer = GCP.HTTPSLoadBalancer(
     "backend-edge",
-    service: service,
+    service: edgeService,
     domainName: .init(hostname: "api.example.com", dns: dns),
     cdn: .enabled()
 )
@@ -853,7 +881,7 @@ let assets = GCP.Bucket("assets", publicReadAccess: true)
 let cdn = GCP.CDN(
     "application-edge",
     origins: [
-        .cloudRun(service, path: "*"),
+        .cloudRun(edgeService, path: "*"),
         .bucket(assets, path: "/assets/*"),
         .external(hostname: "images.example.net", path: "/images/*"),
     ],

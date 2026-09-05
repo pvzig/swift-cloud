@@ -24,14 +24,22 @@ extension GCP.Spanner {
             context: Context = .current
         ) {
             capacity.validate()
+            let resolvedDisplayName =
+                displayName
+                ?? tokenize(context.gcpStage, name, maxLength: 30)
+            precondition(
+                (4...30).contains(resolvedDisplayName.count),
+                "Spanner display names must contain between 4 and 30 characters"
+            )
             resource = Resource(
                 name: name,
                 type: "gcp:spanner:Instance",
                 properties: [
                     "project": context.gcpProjectID,
                     "name": tokenize(context.gcpStage, name, maxLength: 30),
-                    "config": configuration ?? "regional-\(context.gcpRegion.rawValue)",
-                    "displayName": displayName ?? name,
+                    "config": configuration
+                        ?? "regional-\(GCP.resolvedRegion(nil, options: options, context: context).rawValue)",
+                    "displayName": resolvedDisplayName,
                     "edition": edition.rawValue,
                     "numNodes": capacity.nodes,
                     "processingUnits": capacity.processingUnits,
@@ -85,8 +93,17 @@ extension GCP.Spanner.Instance {
             case .nodes(let value):
                 precondition(value > 0, "Spanner node capacity must be greater than zero")
             case .processingUnits(let value):
-                precondition(value >= 100, "Spanner processing units must be at least 100")
+                Self.validateProcessingUnits(value, name: "Spanner processing units")
             }
+        }
+
+        fileprivate static func validateProcessingUnits(_ value: Int, name: String) {
+            precondition(value >= 100, "\(name) must be at least 100")
+            let increment = value < 1_000 ? 100 : 1_000
+            precondition(
+                value.isMultiple(of: increment),
+                "\(name) must be a multiple of \(increment)"
+            )
         }
     }
 
@@ -122,7 +139,14 @@ extension GCP.Spanner.Instance {
         }
 
         fileprivate func validate() {
-            precondition(minimumProcessingUnits >= 100, "minimumProcessingUnits must be at least 100")
+            Capacity.validateProcessingUnits(
+                minimumProcessingUnits,
+                name: "minimumProcessingUnits"
+            )
+            Capacity.validateProcessingUnits(
+                maximumProcessingUnits,
+                name: "maximumProcessingUnits"
+            )
             precondition(
                 maximumProcessingUnits >= minimumProcessingUnits,
                 "maximumProcessingUnits must not be less than minimumProcessingUnits"

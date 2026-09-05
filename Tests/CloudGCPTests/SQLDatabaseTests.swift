@@ -21,6 +21,7 @@ struct SQLDatabaseTests {
 
         let instance = try properties(type: "gcp:sql:DatabaseInstance", in: context)
         #expect(instance["databaseVersion"] as? String == "POSTGRES_16")
+        #expect(instance["name"] == nil)
         #expect(instance["region"] as? String == "us-east1")
         #expect(instance["deletionProtection"] as? Bool == true)
 
@@ -43,5 +44,82 @@ struct SQLDatabaseTests {
             user["name"] as? String
                 == "${production-main-backend-service-account-iam-username.result}"
         )
+    }
+
+    @Test("Engine family comes from databaseVersion, not the connection scheme")
+    func engineFamily() throws {
+        let context = makeContext()
+        _ = GCP.SQLDatabase(
+            "main",
+            engine: .init(
+                databaseVersion: "POSTGRES_16",
+                port: 5432,
+                scheme: "postgresql"
+            ),
+            context: context
+        )
+
+        let instance = try properties(type: "gcp:sql:DatabaseInstance", in: context)
+        let settings = try #require(instance["settings"] as? [String: Any])
+        let flags = try #require(settings["databaseFlags"] as? [[String: Any]])
+        #expect(flags.first?["name"] as? String == "cloudsql.iam_authentication")
+    }
+
+    @Test("Password-auth databases do not create invalid IAM database users")
+    func passwordAuthenticationLink() {
+        let context = makeContext()
+        let runtime = GCP.ServiceAccount("backend", context: context)
+        let database = GCP.SQLDatabase(
+            "main",
+            iamAuthenticationEnabled: false,
+            context: context
+        )
+        _ = GCP.CloudRunService(
+            "backend",
+            image: "us-docker.pkg.dev/example/backend:latest",
+            serviceAccount: runtime,
+            context: context
+        ).link(database)
+
+        #expect(context.store.resources.contains { $0.type == "gcp:sql:User" } == false)
+        let roles = context.store.resources.filter { $0.type == "gcp:projects:IAMMember" }
+        #expect(roles.count == 1)
+        #expect(database.actions == ["roles/cloudsql.client"])
+    }
+
+    @Test("Cloud SQL rejects configurations without a viable network path")
+    func missingNetworkPath() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.SQLDatabase(
+                "main",
+                publicIPv4: false,
+                context: makeContext()
+            )
+        }
+    }
+
+    @Test("Regional Cloud SQL requires backups")
+    func regionalBackups() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.SQLDatabase(
+                "main",
+                backupsEnabled: false,
+                availability: .regional,
+                context: makeContext()
+            )
+        }
+    }
+
+    @Test("Regional MySQL requires binary logging")
+    func regionalMySQLBinaryLogging() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.SQLDatabase(
+                "main",
+                engine: .mysql8,
+                pointInTimeRecoveryEnabled: false,
+                availability: .regional,
+                context: makeContext()
+            )
+        }
     }
 }

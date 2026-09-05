@@ -48,6 +48,7 @@ struct EdgeTests {
         let service = GCP.CloudRunService(
             "web",
             image: "us-docker.pkg.dev/example/web:latest",
+            ingress: .internalLoadBalancer,
             context: context
         )
         let bucket = GCP.Bucket("assets", publicReadAccess: true, context: context)
@@ -55,7 +56,7 @@ struct EdgeTests {
             "web-edge",
             origins: [
                 .cloudRun(service, path: "*"),
-                .bucket(bucket, path: "/assets/*"),
+                .bucket(bucket, path: "/assets"),
                 .external(hostname: "images.example.net", path: "/images/*"),
             ],
             domainName: .init(hostname: "www.example.com", dns: dns),
@@ -98,6 +99,7 @@ struct EdgeTests {
             "api",
             image: "us-docker.pkg.dev/example/api:latest",
             location: .europeWest1,
+            ingress: .internalLoadBalancer,
             context: context
         )
         _ = GCP.HTTPSLoadBalancer(
@@ -129,25 +131,26 @@ struct EdgeTests {
         #expect(cdnGroup["region"] as? String == "${testing-api.location}")
     }
 
-    @Test("An explicit edge location still overrides the service region")
-    func explicitEndpointGroupRegion() throws {
+    @Test("The load balancer always follows the service region")
+    func loadBalancerServiceRegion() throws {
         let context = makeContext()
         let dns = GCP.DNS("example-zone", zoneName: "example.com", context: context)
         let service = GCP.CloudRunService(
             "api",
             image: "us-docker.pkg.dev/example/api:latest",
+            location: .usWest1,
+            ingress: .internalLoadBalancer,
             context: context
         )
         _ = GCP.HTTPSLoadBalancer(
             "api-edge",
             service: service,
             domainName: .init(hostname: "api.example.com", dns: dns),
-            location: .usWest1,
             context: context
         )
 
         let group = try properties(type: "gcp:compute:RegionNetworkEndpointGroup", in: context)
-        #expect(group["region"] as? String == "us-west1")
+        #expect(group["region"] as? String == "${testing-api.location}")
     }
 
     @Test("Edge physical names include suffixes within the Compute limit")
@@ -157,6 +160,7 @@ struct EdgeTests {
         let service = GCP.CloudRunService(
             "customer-facing-application-service",
             image: "us-docker.pkg.dev/example/application:latest",
+            ingress: .internalLoadBalancer,
             context: context
         )
         _ = GCP.CDN(
@@ -200,14 +204,27 @@ struct EdgeTests {
             context: context
         )
 
-        #expect(record.fqdn.description == "${testing-example-zone-record-name.result}")
+        let variableName = "testing-example-zone-\(digest(dynamicName, "A"))-record-name"
+        #expect(record.fqdn.description == "${\(variableName).result}")
         let recordProperties = try properties(type: "gcp:dns:RecordSet", in: context)
-        #expect(recordProperties["name"] as? String == "${testing-example-zone-record-name.result}.")
+        #expect(recordProperties["name"] as? String == "${\(variableName).result}.")
+
+        let secondName = Output<String>(
+            prefix: "",
+            root: "second-zone",
+            path: [.property("dnsName")]
+        )
+        _ = GCP.DNSRecord(
+            zone: dns,
+            type: "A",
+            name: secondName,
+            records: ["192.0.2.2"],
+            context: context
+        )
 
         let definitions = try variableDefinitions(in: context)
-        let definition = try #require(
-            definitions["testing-example-zone-record-name"] as? [String: Any]
-        )
+        #expect(definitions.count == 2)
+        let definition = try #require(definitions[variableName] as? [String: Any])
         let invocation = try #require(definition["fn::invoke"] as? [String: Any])
         #expect(invocation["function"] as? String == "str:trimSuffix")
 
@@ -228,4 +245,121 @@ struct EdgeTests {
         let literalProperties = try properties(type: "gcp:dns:RecordSet", in: literalContext)
         #expect(literalProperties["name"] as? String == "api.example.com.")
     }
+
+    @Test("GCP DNS references an existing zone and emits CNAME aliases")
+    func existingDNSZoneAndAlias() throws {
+        let context = makeContext()
+        let dns = GCP.DNS("example-zone", zoneName: "example.com", context: context)
+        _ = dns.createAlias(
+            name: "docs.example.com",
+            target: "ghs.googlehosted.com",
+            ttl: .seconds(300)
+        )
+
+        let zone = try #require(dns.zone.pulumiProjectResources().values.first)
+        #expect(zone.get?.id == "projects/example-project/managedZones/example-zone")
+        #expect(zone.properties == nil)
+        let record = try properties(type: "gcp:dns:RecordSet", in: context)
+        #expect(record["type"] as? String == "CNAME")
+    }
+
+    @Test("Edge resources request an A record from every DNS provider")
+    func edgeUsesAddressRecord() {
+        let context = makeContext()
+        let dns = RecordingDNSProvider()
+        let service = GCP.CloudRunService(
+            "api",
+            image: "us-docker.pkg.dev/example/api:latest",
+            ingress: .internalLoadBalancer,
+            context: context
+        )
+        _ = GCP.HTTPSLoadBalancer(
+            "api-edge",
+            service: service,
+            domainName: .init(hostname: "api.example.com", dns: dns),
+            context: context
+        )
+
+        #expect(dns.recordTypes == ["A"])
+    }
+
+    @Test("Edge components reject directly reachable Cloud Run services")
+    func directIngressIsRejected() async {
+        await #expect(processExitsWith: .failure) {
+            let context = makeContext()
+            let service = GCP.CloudRunService(
+                "api",
+                image: "us-docker.pkg.dev/example/api:latest",
+                context: context
+            )
+            _ = GCP.HTTPSLoadBalancer(
+                "api-edge",
+                service: service,
+                domainName: .init(
+                    hostname: "api.example.com",
+                    dns: GCP.DNS("example-zone", zoneName: "example.com", context: context)
+                ),
+                context: context
+            )
+        }
+    }
+
+    @Test("Managed certificate names change with the hostname")
+    func certificateRevisionName() throws {
+        func certificateName(hostname: String) throws -> String {
+            let context = makeContext()
+            let service = GCP.CloudRunService(
+                "api",
+                image: "us-docker.pkg.dev/example/api:latest",
+                ingress: .internalLoadBalancer,
+                context: context
+            )
+            _ = GCP.HTTPSLoadBalancer(
+                "api-edge",
+                service: service,
+                domainName: .init(
+                    hostname: hostname,
+                    dns: GCP.DNS("example-zone", zoneName: "example.com", context: context)
+                ),
+                context: context
+            )
+            let certificate = try properties(
+                type: "gcp:compute:ManagedSslCertificate",
+                in: context
+            )
+            return try #require(certificate["name"] as? String)
+        }
+
+        #expect(
+            try certificateName(hostname: "api.example.com")
+                != certificateName(hostname: "new.example.com")
+        )
+    }
+}
+
+private final class RecordingDNSProvider: DNSProvider, @unchecked Sendable {
+    private(set) var recordTypes: [String] = []
+
+    func createRecord(
+        type: DNSRecordType,
+        name: any Input<String>,
+        target: any Input<String>,
+        ttl: Duration
+    ) -> DNSProviderRecord {
+        recordTypes.append(type.description)
+        return RecordingDNSRecord(fqdn: "\(name)")
+    }
+
+    func createAlias(
+        name: any Input<String>,
+        target: any Input<String>,
+        ttl: Duration
+    ) -> DNSProviderRecord {
+        recordTypes.append("ALIAS")
+        return RecordingDNSRecord(fqdn: "\(name)")
+    }
+}
+
+private struct RecordingDNSRecord: DNSProviderRecord {
+    let fqdn: Output<String>
 }

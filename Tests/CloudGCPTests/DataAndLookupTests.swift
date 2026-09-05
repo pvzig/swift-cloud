@@ -55,6 +55,7 @@ struct DataAndLookupTests {
         #expect(fields[1]["order"] as? String == "DESCENDING")
 
         let instance = try properties(type: "gcp:spanner:Instance", in: context)
+        #expect(instance["displayName"] as? String == "production-global-data")
         let autoscaling = try #require(instance["autoscalingConfig"] as? [String: Any])
         let limits = try #require(autoscaling["autoscalingLimits"] as? [String: Any])
         #expect(limits["maxProcessingUnits"] as? Int == 2_000)
@@ -121,5 +122,60 @@ struct DataAndLookupTests {
                 "gcp:organizations:getProject",
             ]
         )
+    }
+
+    @Test("Lookup identities include project and region")
+    func lookupIdentity() throws {
+        let context = makeContext()
+        _ = GCP.Compute.getNetwork(name: "default", project: "project-a", context: context)
+        _ = GCP.Compute.getNetwork(name: "default", project: "project-b", context: context)
+        _ = GCP.Compute.getSubnetwork(
+            name: "default",
+            location: .usEast1,
+            project: "project-a",
+            context: context
+        )
+        _ = GCP.Compute.getSubnetwork(
+            name: "default",
+            location: .europeWest1,
+            project: "project-a",
+            context: context
+        )
+        _ = GCP.DNS.getManagedZone(name: "primary", project: "project-a", context: context)
+        _ = GCP.DNS.getManagedZone(name: "primary", project: "project-b", context: context)
+
+        let definitions = try variableDefinitions(in: context)
+        #expect(definitions.count == 6)
+    }
+
+    @Test("Spanner rejects invalid processing-unit increments")
+    func invalidSpannerCapacity() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.Spanner.Instance(
+                "database",
+                capacity: .processingUnits(150),
+                context: makeContext()
+            )
+        }
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.Spanner.Instance(
+                "database",
+                capacity: .autoscaling(
+                    .init(minimumProcessingUnits: 100, maximumProcessingUnits: 1_500)
+                ),
+                context: makeContext()
+            )
+        }
+    }
+
+    @Test("Explicit Spanner display names obey the API length range")
+    func invalidSpannerDisplayName() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.Spanner.Instance(
+                "database",
+                displayName: "db",
+                context: makeContext()
+            )
+        }
     }
 }

@@ -9,7 +9,7 @@ struct PubSubTests {
     func pushSubscription() throws {
         let context = makeContext()
         let pushAccount = GCP.ServiceAccount("push", context: context)
-        let pubSubIdentity = GCP.ServiceIdentity("pubsub-agent", service: .pubSub, context: context)
+        let pubSubIdentity = GCP.ServiceIdentity.shared(.pubSub, context: context)
         pushAccount.grantServiceAccountRole(.serviceAccountTokenCreator, to: pubSubIdentity.member)
 
         let gateway = GCP.CloudRunService(
@@ -23,7 +23,6 @@ struct PubSubTests {
             context: context
         )
         let deadLetterTopic = GCP.Topic("events-dead-letter", context: context)
-            .allowPublishing(from: pubSubIdentity)
 
         let subscription = GCP.Subscription(
             "events-push",
@@ -35,12 +34,12 @@ struct PubSubTests {
             ),
             retryPolicy: .init(
                 minimumBackoff: .milliseconds(500),
-                maximumBackoff: .seconds(600) + .milliseconds(500)
+                maximumBackoff: .seconds(600)
             ),
             deadLetterPolicy: .init(topic: deadLetterTopic),
             messageRetention: .seconds(600) + .milliseconds(500),
             context: context
-        ).allowServiceAgentToConsume(pubSubIdentity)
+        )
 
         #expect(subscription.name.description == "${testing-events-push.name}")
 
@@ -61,7 +60,7 @@ struct PubSubTests {
 
         let retry = try #require(subscriptionProperties["retryPolicy"] as? [String: Any])
         #expect(retry["minimumBackoff"] as? String == "0.5s")
-        #expect(retry["maximumBackoff"] as? String == "600.5s")
+        #expect(retry["maximumBackoff"] as? String == "600s")
         #expect(subscriptionProperties["messageRetentionDuration"] as? String == "600.5s")
         let expiration = try #require(subscriptionProperties["expirationPolicy"] as? [String: Any])
         #expect(expiration["ttl"] as? String == "")
@@ -90,6 +89,15 @@ struct PubSubTests {
         let subscription = try properties(type: "gcp:pubsub:Subscription", in: context)
         let expiration = try #require(subscription["expirationPolicy"] as? [String: Any])
         #expect(expiration["ttl"] as? String == "86400.5s")
+    }
+
+    @Test("Subscription retry backoff rejects values above the provider ceiling")
+    func excessiveRetryBackoff() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.Subscription.RetryPolicy(
+                maximumBackoff: .seconds(600) + .nanoseconds(1)
+            )
+        }
     }
 
     @Test("Granting one role to several members keeps every binding")

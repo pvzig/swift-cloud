@@ -22,18 +22,21 @@ extension GCP {
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
+            let projectID =
+                (options?.provider as? GCP.Provider)?.projectID
+                ?? context.gcpProjectID
             bucket = Resource(
                 name: name,
                 type: "gcp:storage:Bucket",
                 properties: [
-                    "project": context.gcpProjectID,
+                    "project": projectID,
                     "name": tokenize(
-                        context.gcpProjectID,
+                        projectID,
                         context.gcpStage,
                         name,
                         maxLength: 63
                     ),
-                    "location": (location ?? context.gcpRegion).rawValue,
+                    "location": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "storageClass": storageClass.rawValue,
                     "uniformBucketLevelAccess": true,
                     "publicAccessPrevention": publicReadAccess ? "inherited" : "enforced",
@@ -45,7 +48,7 @@ extension GCP {
             )
 
             if publicReadAccess {
-                _ = Resource(
+                _ = GCP.sharedResource(
                     name: "\(name)-public-object-viewer",
                     type: "gcp:storage:BucketIAMMember",
                     properties: [
@@ -76,7 +79,7 @@ extension GCP.Bucket {
     }
 
     private func objectAccessGrant(for serviceAccount: GCP.ServiceAccount) -> Resource {
-        Resource(
+        GCP.sharedResource(
             name: "\(bucket.chosenName)-object-user-\(serviceAccount.resource.chosenName)",
             type: "gcp:storage:BucketIAMMember",
             properties: [
@@ -91,10 +94,6 @@ extension GCP.Bucket {
 }
 
 extension GCP.Bucket: GCPLinkable {
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        _ = accessGrants(to: serviceAccount)
-    }
-
     public var actions: [String] {
         [GCP.IAMRole.storageObjectUser.rawValue]
     }

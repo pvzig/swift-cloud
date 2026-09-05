@@ -31,7 +31,7 @@ extension GCP {
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
-            precondition([1, 2, 4, 6, 8].contains(cpu), "cpu must be one of 1, 2, 4, 6, or 8")
+            CloudRunService.validateResourceLimits(cpu: cpu, memory: memory)
             scaling.validate()
             CloudRunService.validateSecretEnvironment(secretEnvironment)
 
@@ -44,7 +44,7 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "name": tokenize(context.gcpStage, name, maxLength: 49),
-                    "location": (location ?? context.gcpRegion).rawValue,
+                    "location": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "deletionProtection": deletionProtection,
                     "scaling": scaling.properties,
                     "template": [
@@ -119,7 +119,7 @@ extension GCP.CloudRunWorkerPool {
 }
 
 extension GCP.CloudRunWorkerPool: EnvironmentProvider, GCPRoleProvider {
-    public var gcpResource: Resource? {
+    public var gcpResource: Resource {
         workerPool
     }
 

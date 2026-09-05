@@ -32,7 +32,8 @@ public struct Resource: Sendable {
         self.chosenName = name
         self.type = type
         self.context = context
-        self.properties = properties
+        let propertyProvider = options?.provider as? any ResourcePropertyProvider
+        self.properties = propertyProvider?.resourceProperties(properties, in: context) ?? properties
         self.dependsOn = dependsOn
         self.options = options
         self.existingId = existingId
@@ -41,6 +42,7 @@ public struct Resource: Sendable {
     }
 
     func pulumiProjectResources() -> Pulumi.Project.Resources {
+        let options = context.store.renderOptions(for: self)
         var dependencyNames = Set<String>()
         let dependencies = ((options?.dependsOn ?? []) + (dependsOn ?? [])).filter {
             dependencyNames.insert($0.output.description).inserted
@@ -59,6 +61,12 @@ public struct Resource: Sendable {
             )
         ]
     }
+}
+
+/// A custom provider that rewrites provider-owned resource defaults before
+/// Swift Cloud serializes the Pulumi project.
+public protocol ResourcePropertyProvider: ResourceProvider {
+    func resourceProperties(_ properties: AnyEncodable?, in context: Context) -> AnyEncodable?
 }
 
 extension Resource {

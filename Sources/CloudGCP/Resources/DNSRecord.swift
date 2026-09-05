@@ -26,7 +26,7 @@ extension GCP {
                     Strings.trimSuffix(
                         name,
                         suffix: ".",
-                        name: "\(zone.zone.chosenName)-record-name",
+                        name: "\(zone.zone.chosenName)-\(digest(name, type))-record-name",
                         context: context
                     ).result
             }

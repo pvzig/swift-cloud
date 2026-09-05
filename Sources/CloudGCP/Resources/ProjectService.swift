@@ -15,13 +15,17 @@ extension GCP {
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
-            resource = Resource(
+            precondition(
+                disableOnDestroy == false,
+                "Swift Cloud preserves project-wide APIs when a stack is destroyed"
+            )
+            resource = GCP.sharedResource(
                 name: "\(tokenize(api.rawValue))-api",
                 type: "gcp:projects:Service",
                 properties: [
                     "project": context.gcpProjectID,
                     "service": api.rawValue,
-                    "disableOnDestroy": disableOnDestroy,
+                    "disableOnDestroy": false,
                 ],
                 options: options,
                 context: context

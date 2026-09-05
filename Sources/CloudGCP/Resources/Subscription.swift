@@ -3,6 +3,7 @@ import CloudCore
 extension GCP {
     public struct Subscription: GCPResourceProvider {
         public let resource: Resource
+        public let ordersConsumerAfterAccessGrants: Bool
 
         public var name: Output<String> {
             resource.name
@@ -32,6 +33,12 @@ extension GCP {
                 )
             }
             expiration.validate(messageRetention: messageRetention)
+            switch delivery {
+            case .pull:
+                ordersConsumerAfterAccessGrants = true
+            case .push:
+                ordersConsumerAfterAccessGrants = false
+            }
 
             resource = Resource(
                 name: name,
@@ -52,6 +59,16 @@ extension GCP {
                 options: options,
                 context: context
             )
+
+            if let deadLetterPolicy {
+                let pubSubIdentity = ServiceIdentity.shared(
+                    .pubSub,
+                    options: options,
+                    context: context
+                )
+                _ = deadLetterPolicy.topic.allowPublishing(from: pubSubIdentity)
+                _ = allowServiceAgentToConsume(pubSubIdentity)
+            }
         }
     }
 }
@@ -123,6 +140,10 @@ extension GCP.Subscription {
         ) {
             precondition(minimumBackoff >= .zero, "minimumBackoff must not be negative")
             precondition(maximumBackoff >= minimumBackoff, "maximumBackoff must not be less than minimumBackoff")
+            precondition(
+                maximumBackoff <= .seconds(600),
+                "maximumBackoff must not exceed 600 seconds"
+            )
             self.minimumBackoff = minimumBackoff
             self.maximumBackoff = maximumBackoff
         }
@@ -171,7 +192,7 @@ extension GCP.Subscription {
         member: any Input<String>,
         bindingName: String
     ) -> Resource {
-        Resource(
+        GCP.sharedResource(
             // The identity is part of the name so several subscribers do not
             // collapse into one logical IAM resource.
             name: "\(resource.chosenName)-subscriber-\(bindingName)",
@@ -198,10 +219,6 @@ extension GCP.Subscription {
 }
 
 extension GCP.Subscription: GCPLinkable {
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        _ = accessGrants(to: serviceAccount)
-    }
-
     public var actions: [String] {
         [GCP.IAMRole.pubSubSubscriber.rawValue]
     }

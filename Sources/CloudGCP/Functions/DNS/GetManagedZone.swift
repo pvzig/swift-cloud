@@ -16,12 +16,13 @@ extension GCP.DNS {
         project: String? = nil,
         context: Context = .current
     ) -> Output<GetManagedZone> {
-        Variable<GetManagedZone>.invoke(
-            name: "\(name)-managed-zone",
+        let project = project ?? context.gcpProjectID
+        return Variable<GetManagedZone>.invoke(
+            name: "\(name)-\(digest(name, project))-managed-zone",
             function: "gcp:dns:getManagedZone",
             arguments: [
                 "name": name,
-                "project": project ?? context.gcpProjectID,
+                "project": project,
             ],
             context: context
         ).output

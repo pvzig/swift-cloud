@@ -23,6 +23,14 @@ extension GCP {
             context: Context = .current
         ) {
             precondition((0...65_535).contains(priority), "priority must be between 0 and 65535")
+            if direction == .ingress {
+                precondition(
+                    sourceRanges.isEmpty == false
+                        || sourceServiceAccounts.isEmpty == false
+                        || sourceTags.isEmpty == false,
+                    "ingress firewall rules require a source range, service account, or tag"
+                )
+            }
             action.validate()
 
             var properties: [String: AnyEncodable] = [
@@ -33,7 +41,6 @@ extension GCP {
                 "priority": AnyEncodable(priority),
                 "allows": AnyEncodable(action.allowProperties),
                 "denies": AnyEncodable(action.denyProperties),
-                "enableLogging": AnyEncodable(logging.isEnabled),
                 "logConfig": AnyEncodable(logging.properties),
                 "disabled": AnyEncodable(disabled),
             ]
@@ -72,7 +79,7 @@ extension GCP {
 }
 
 extension GCP.FirewallRule {
-    public enum Direction: String, Sendable {
+    public enum Direction: String, Equatable, Sendable {
         case egress = "EGRESS"
         case ingress = "INGRESS"
     }
@@ -135,15 +142,6 @@ extension GCP.FirewallRule {
         case disabled
         case excludeAllMetadata
         case includeAllMetadata
-
-        fileprivate var isEnabled: Bool {
-            switch self {
-            case .disabled:
-                false
-            case .excludeAllMetadata, .includeAllMetadata:
-                true
-            }
-        }
 
         fileprivate var properties: AnyEncodable? {
             switch self {

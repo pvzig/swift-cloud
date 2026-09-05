@@ -27,7 +27,6 @@ extension GCP {
             tier: Tier = .basic,
             memorySizeGB: Int = 1,
             redisVersion: String = "REDIS_7_2",
-            deletionProtection: Bool? = nil,
             options: Resource.Options? = nil,
             context: Context = .current
         ) {
@@ -39,7 +38,7 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "name": tokenize(context.gcpStage, name, maxLength: 40),
-                    "region": (location ?? context.gcpRegion).rawValue,
+                    "region": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "tier": tier.rawValue,
                     "memorySizeGb": memorySizeGB,
                     "redisVersion": redisVersion,
@@ -48,7 +47,6 @@ extension GCP {
                     "reservedIpRange": vpc.privateAddress.name,
                     "authEnabled": false,
                     "transitEncryptionMode": "DISABLED",
-                    "deletionProtection": deletionProtection ?? context.isProduction,
                 ],
                 options: options,
                 context: context,
@@ -66,10 +64,6 @@ extension GCP.Cache {
 }
 
 extension GCP.Cache: GCPLinkable {
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        _ = accessGrants(to: serviceAccount)
-    }
-
     public var actions: [String] {
         []
     }

@@ -40,29 +40,32 @@ public final class Store: @unchecked Sendable {
         get { queue.sync { _links } }
         set { queue.sync { _links = newValue } }
     }
+
+    private struct ResourceKey: Hashable {
+        let type: String
+        let chosenName: String
+    }
+
+    private var additionalDependencies: [ResourceKey: [any ResourceProvider]] = [:]
+    private var optionOverrides: [ResourceKey: Resource.Options] = [:]
 }
 
 extension Store {
     /// Returns the tracked resource with the given provider type and chosen logical name.
     public func resource(type: String, chosenName: String) -> Resource? {
-        resources.first {
+        resources.last {
             $0.type == type && $0.chosenName == chosenName
         }
-    }
-
-    /// Returns whether a resource with the same provider type and chosen logical name is tracked.
-    public func containsResource(type: String, chosenName: String) -> Bool {
-        resource(type: type, chosenName: chosenName) != nil
     }
 
     public func track(_ resource: Resource) {
         resources.append(resource)
     }
 
-    /// Adds deployment-order dependencies to a resource that is already tracked.
+    /// Adds render-time deployment-order dependencies to a tracked resource.
     ///
-    /// Component links are declared after workload initialization, so their IAM
-    /// grants do not exist when the workload's `Resource` value is constructed.
+    /// Keeping the edge in the store means both the originally returned value and
+    /// the tracked copy render the same dependency set.
     public func addDependencies(
         _ dependencies: [any ResourceProvider],
         to resource: Resource
@@ -72,13 +75,55 @@ extension Store {
         }
         queue.sync {
             guard
-                let index = _resources.firstIndex(where: {
+                _resources.contains(where: {
                     $0.type == resource.type && $0.chosenName == resource.chosenName
                 })
             else {
                 preconditionFailure("cannot add dependencies to an untracked resource")
             }
-            _resources[index].dependsOn = (_resources[index].dependsOn ?? []) + dependencies
+            let key = ResourceKey(type: resource.type, chosenName: resource.chosenName)
+            additionalDependencies[key, default: []].append(contentsOf: dependencies)
+        }
+    }
+
+    /// Merges options supplied by a later owner of the same logical resource.
+    public func mergeOptions(_ options: Resource.Options?, into resource: Resource) {
+        guard let options else {
+            return
+        }
+        queue.sync {
+            let key = ResourceKey(type: resource.type, chosenName: resource.chosenName)
+            var merged = optionOverrides[key] ?? resource.options ?? .init()
+            merged.dependsOn = (merged.dependsOn ?? []) + (options.dependsOn ?? [])
+            merged.protect =
+                (merged.protect == true || options.protect == true)
+                ? true
+                : options.protect ?? merged.protect
+            if let provider = options.provider {
+                if let existingProvider = merged.provider {
+                    precondition(
+                        existingProvider.output.description == provider.output.description,
+                        "one logical resource cannot use two providers"
+                    )
+                } else {
+                    merged.provider = provider
+                }
+            }
+            optionOverrides[key] = merged
+        }
+    }
+
+    func renderOptions(for resource: Resource) -> Resource.Options? {
+        queue.sync {
+            let key = ResourceKey(type: resource.type, chosenName: resource.chosenName)
+            let options = optionOverrides[key] ?? resource.options
+            let dependencies = additionalDependencies[key] ?? []
+            guard dependencies.isEmpty == false else {
+                return options
+            }
+            var merged = options ?? .init()
+            merged.dependsOn = (merged.dependsOn ?? []) + dependencies
+            return merged
         }
     }
 

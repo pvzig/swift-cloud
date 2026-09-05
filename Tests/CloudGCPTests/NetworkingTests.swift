@@ -59,20 +59,36 @@ struct NetworkingTests {
         let cache = try properties(type: "gcp:redis:Instance", in: context)
         #expect(cache["tier"] as? String == "STANDARD_HA")
         #expect(cache["connectMode"] as? String == "PRIVATE_SERVICE_ACCESS")
+        #expect(cache["deletionProtection"] == nil)
 
         let connection = try resource(type: "gcp:servicenetworking:Connection", in: context)
         let dependencies = try #require(connection.pulumiProjectResources().values.first?.options?.dependsOn)
         #expect(dependencies.count == 2)
+        for chosenName in ["database", "database-read-replica-1", "cache"] {
+            let dependent = try resource(
+                type: chosenName == "cache" ? "gcp:redis:Instance" : "gcp:sql:DatabaseInstance",
+                in: context,
+                chosenName: chosenName
+            )
+            let dependencies =
+                dependent.pulumiProjectResources()
+                .values.first?.options?.dependsOn ?? []
+            #expect(
+                dependencies.map(\.description).contains(
+                    "${production-main-private-services-connection}"
+                )
+            )
+        }
     }
 
     @Test("Firewall and Cloud NAT encode private-network controls")
     func firewallAndNAT() throws {
         let context = makeContext()
-        let vpc = GCP.VPC("main", context: context)
+        let vpc = GCP.VPC("main", location: .europeWest1, context: context)
         _ = GCP.FirewallRule(
             "allow-health-checks",
             vpc: vpc,
-            action: .allow([.tcp(["8080", "8443"])]),
+            action: .allow([.tcp(["8080", "8443"]), .udp(["53"])]),
             sourceRanges: ["35.191.0.0/16", "130.211.0.0/22"],
             priority: 900,
             context: context
@@ -94,13 +110,18 @@ struct NetworkingTests {
         #expect(firewall["sourceTags"] == nil)
         #expect(firewall["targetTags"] == nil)
         #expect(firewall["destinationRanges"] == nil)
+        #expect(firewall["enableLogging"] == nil)
         let allows = try #require(firewall["allows"] as? [[String: Any]])
         #expect(allows.first?["protocol"] as? String == "tcp")
         #expect(allows.first?["ports"] as? [String] == ["8080", "8443"])
+        #expect(allows.last?["protocol"] as? String == "udp")
+        #expect(allows.last?["ports"] as? [String] == ["53"])
 
         let router = try properties(type: "gcp:compute:Router", in: context)
         #expect(router["network"] as? String == "${testing-main.id}")
+        #expect(router["region"] as? String == "europe-west1")
         let nat = try properties(type: "gcp:compute:RouterNat", in: context)
+        #expect(nat["region"] as? String == "europe-west1")
         #expect(nat["natIpAllocateOption"] as? String == "AUTO_ONLY")
         #expect(nat["sourceSubnetworkIpRangesToNat"] as? String == "ALL_SUBNETWORKS_ALL_IP_RANGES")
         #expect(nat["minPortsPerVm"] as? Int == 128)
@@ -132,6 +153,19 @@ struct NetworkingTests {
             if let physicalName = resourceProperties["name"] as? String {
                 #expect(physicalName.count <= 63)
             }
+        }
+    }
+
+    @Test("Ingress firewall rules require an explicit source")
+    func ingressSourceRequired() async {
+        await #expect(processExitsWith: .failure) {
+            let context = makeContext()
+            _ = GCP.FirewallRule(
+                "allow-web",
+                vpc: GCP.VPC("main", context: context),
+                action: .allow([.tcp(["443"])]),
+                context: context
+            )
         }
     }
 }

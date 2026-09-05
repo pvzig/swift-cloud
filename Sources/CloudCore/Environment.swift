@@ -68,19 +68,19 @@ public final class Environment: Encodable, @unchecked Sendable {
     }
 
     public subscript(key: String) -> (any Input<String>)? {
-        get { store[Self.toKey(key)] }
-        set { store[Self.toKey(key)] = newValue }
+        get { store[Self.key(from: key)] }
+        set { store[Self.key(from: key)] = newValue }
     }
 
     public func merge(_ other: [String: any Input<String>]) {
         for (key, value) in other {
-            store[Self.toKey(key)] = value
+            store[Self.key(from: key)] = value
         }
     }
 }
 
 extension Environment {
-    static func toKey(_ key: String) -> String {
+    public static func key(from key: String) -> String {
         tokenize(key, separator: "_").uppercased()
     }
 }

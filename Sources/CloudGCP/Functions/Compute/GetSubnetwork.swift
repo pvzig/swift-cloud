@@ -19,13 +19,15 @@ extension GCP.Compute {
         project: String? = nil,
         context: Context = .current
     ) -> Output<GetSubnetwork> {
-        Variable<GetSubnetwork>.invoke(
-            name: "\(name)-subnetwork",
+        let project = project ?? context.gcpProjectID
+        let region = (location ?? context.gcpRegion).rawValue
+        return Variable<GetSubnetwork>.invoke(
+            name: "\(name)-\(digest(name, project, region))-subnetwork",
             function: "gcp:compute:getSubnetwork",
             arguments: [
                 "name": name,
-                "project": project ?? context.gcpProjectID,
-                "region": (location ?? context.gcpRegion).rawValue,
+                "project": project,
+                "region": region,
             ],
             context: context
         ).output

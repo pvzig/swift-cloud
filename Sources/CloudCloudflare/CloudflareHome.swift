@@ -4,6 +4,9 @@ import Foundation
 
 extension Cloudflare {
     public final class Home: HomeProvider, @unchecked Sendable {
+        public enum Error: Swift.Error {
+            case itemNotFound
+        }
         public let accountId: String
 
         private let apiToken: String
@@ -52,9 +55,16 @@ extension Cloudflare {
             request.method = .GET
             request.headers.add(name: "Authorization", value: "Bearer \(apiToken)")
             let response = try await client.execute(request, timeout: .seconds(10))
+            guard response.status != .notFound else {
+                throw Error.itemNotFound
+            }
             let bytes = try await response.body.collect(upTo: 16 * 1024 * 1024)
             let data = Data(bytes.readableBytesView)
             return try JSONDecoder().decode(NamespaceValue<T>.self, from: data).value
+        }
+
+        public func isItemNotFoundError(_ error: any Swift.Error) -> Bool {
+            error is Error
         }
     }
 }

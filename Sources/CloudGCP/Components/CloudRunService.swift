@@ -5,6 +5,7 @@ extension GCP {
         public let service: Resource
         public let serviceAccount: ServiceAccount?
         public let environment: Environment
+        public let ingress: Ingress
 
         public var name: Output<String> {
             service.name
@@ -56,7 +57,7 @@ extension GCP {
         ) {
             precondition((1...65_535).contains(port), "port must be a valid TCP port")
             precondition((1...1_000).contains(requestConcurrency), "requestConcurrency must be between 1 and 1000")
-            precondition([1, 2, 4, 6, 8].contains(cpu), "cpu must be one of 1, 2, 4, 6, or 8")
+            Self.validateResourceLimits(cpu: cpu, memory: memory)
             precondition(
                 (.seconds(1)...Duration.seconds(3_600)).contains(timeout),
                 "timeout must be between 1 and 3600 seconds"
@@ -71,6 +72,7 @@ extension GCP {
 
             self.serviceAccount = serviceAccount
             self.environment = Environment(environment, shape: .nameValueList, context: context)
+            self.ingress = ingress
 
             let applicationContainer = Self.containerProperties(
                 name: "app",
@@ -100,17 +102,17 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "name": serviceName,
-                    "location": (location ?? context.gcpRegion).rawValue,
+                    "location": GCP.resolvedRegion(location, options: options, context: context).rawValue,
                     "ingress": ingress.rawValue,
                     "deletionProtection": deletionProtection,
-                    "scaling": [
-                        "minInstanceCount": scaling.minimumInstances,
-                        "maxInstanceCount": scaling.maximumInstances,
-                    ],
                     "template": [
                         "serviceAccount": AnyEncodable(serviceAccount?.email),
                         "maxInstanceRequestConcurrency": requestConcurrency,
                         "timeout": timeout.protobufString,
+                        "scaling": [
+                            "minInstanceCount": scaling.minimumInstances,
+                            "maxInstanceCount": scaling.maximumInstances,
+                        ],
                         "containers": [applicationContainer] + sidecars.map(\.properties),
                         "volumes": volumes.map(\.properties),
                         "vpcAccess": Self.vpcAccessProperties(vpc, egress: vpcEgress),
@@ -153,7 +155,7 @@ extension GCP.CloudRunService {
         }
     }
 
-    public enum Ingress: String, Sendable {
+    public enum Ingress: String, Equatable, Sendable {
         case all = "INGRESS_TRAFFIC_ALL"
         case internalOnly = "INGRESS_TRAFFIC_INTERNAL_ONLY"
         case internalLoadBalancer = "INGRESS_TRAFFIC_INTERNAL_LOAD_BALANCER"
@@ -193,7 +195,7 @@ extension GCP.CloudRunService {
 
         var properties: AnyEncodable {
             [
-                "name": Self.environmentKey(name),
+                "name": Environment.key(from: name),
                 "valueSource": [
                     "secretKeyRef": [
                         "secret": secret,
@@ -203,9 +205,6 @@ extension GCP.CloudRunService {
             ]
         }
 
-        static func environmentKey(_ key: String) -> String {
-            tokenize(key, separator: "_").uppercased()
-        }
     }
 }
 
@@ -316,7 +315,7 @@ extension GCP.CloudRunService {
             startupProbe: Probe? = nil,
             livenessProbe: Probe? = nil
         ) {
-            precondition([1, 2, 4, 6, 8].contains(cpu), "cpu must be one of 1, 2, 4, 6, or 8")
+            GCP.CloudRunService.validateResourceLimits(cpu: cpu, memory: memory)
             GCP.CloudRunService.validateSecretEnvironment(secretEnvironment)
 
             self.name = name
@@ -376,7 +375,7 @@ extension GCP.CloudRunService {
         member: any Input<String>,
         bindingName: String
     ) -> Self {
-        _ = Resource(
+        _ = GCP.sharedResource(
             name: "\(service.chosenName)-invoker-\(bindingName)",
             type: "gcp:cloudrunv2:ServiceIamMember",
             properties: [
@@ -459,14 +458,14 @@ extension GCP.CloudRunService {
         // Literal keys and secret names normalize through the same tokenizer, so
         // distinct inputs can land on one name. Cloud Run rejects duplicate env
         // names outright, and a secret is the more specific declaration, so it wins.
-        var claimedNames = Set(secrets.map { SecretEnvironmentVariable.environmentKey($0.name) })
+        var claimedNames = Set(secrets.map { Environment.key(from: $0.name) })
         let literalEnvironment =
             environment
             .map {
                 (
                     name: keysAreNormalized
                         ? $0.key
-                        : SecretEnvironmentVariable.environmentKey($0.key),
+                        : Environment.key(from: $0.key),
                     value: $0.value
                 )
             }
@@ -477,11 +476,53 @@ extension GCP.CloudRunService {
     }
 
     static func validateSecretEnvironment(_ secrets: [SecretEnvironmentVariable]) {
-        let names = secrets.map { SecretEnvironmentVariable.environmentKey($0.name) }
+        let names = secrets.map { Environment.key(from: $0.name) }
         precondition(
             Set(names).count == names.count,
             "secretEnvironment names must be unique after normalization"
         )
+    }
+
+    static func validateResourceLimits(cpu: Int, memory: String) {
+        precondition([1, 2, 4, 6, 8].contains(cpu), "cpu must be one of 1, 2, 4, 6, or 8")
+        let minimumMemoryMiB: Int =
+            switch cpu {
+            case 1: 128
+            case 2: 512
+            case 4: 2_048
+            case 6, 8: 4_096
+            default: preconditionFailure("unsupported Cloud Run CPU limit")
+            }
+        guard let memoryMiB = memoryMiB(memory) else {
+            preconditionFailure("memory must use a whole-number Ki, Mi, Gi, or Ti quantity")
+        }
+        precondition(
+            memoryMiB >= minimumMemoryMiB,
+            "\(cpu) Cloud Run CPUs require at least \(minimumMemoryMiB)Mi of memory"
+        )
+    }
+
+    private static func memoryMiB(_ quantity: String) -> Int? {
+        let units: [(suffix: String, multiplier: Int)] = [
+            ("Ti", 1_048_576),
+            ("Gi", 1_024),
+            ("Mi", 1),
+            ("Ki", 0),
+        ]
+        guard let unit = units.first(where: { quantity.hasSuffix($0.suffix) }) else {
+            return nil
+        }
+        guard let value = Int(quantity.dropLast(unit.suffix.count)), value > 0 else {
+            return nil
+        }
+        if unit.suffix == "Ki" {
+            return value / 1_024
+        }
+        let result = value.multipliedReportingOverflow(by: unit.multiplier)
+        guard result.overflow == false else {
+            return nil
+        }
+        return result.partialValue
     }
 }
 
@@ -498,7 +539,7 @@ struct CloudRunEnvironment: Encodable, Sendable {
 }
 
 extension GCP.CloudRunService: EnvironmentProvider, GCPRoleProvider {
-    public var gcpResource: Resource? {
+    public var gcpResource: Resource {
         service
     }
 

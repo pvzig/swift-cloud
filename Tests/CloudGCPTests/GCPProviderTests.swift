@@ -23,6 +23,7 @@ struct GCPProviderTests {
     func projectService() throws {
         let context = makeContext()
         _ = GCP.ProjectService(.cloudRun, context: context)
+        _ = GCP.ProjectService(.cloudRun, context: context)
 
         let resource = try resource(type: "gcp:projects:Service", in: context)
         #expect(resource.chosenName == "run-googleapis-com-api")
@@ -31,6 +32,127 @@ struct GCPProviderTests {
         #expect(api["project"] as? String == "example-project")
         #expect(api["service"] as? String == "run.googleapis.com")
         #expect(api["disableOnDestroy"] as? Bool == false)
+        #expect(context.store.resources.filter { $0.type == "gcp:projects:Service" }.count == 1)
+    }
+
+    @Test("Project services cannot disable a project-wide API on stack destroy")
+    func projectServiceDestroyPolicy() async {
+        await #expect(processExitsWith: .failure) {
+            _ = GCP.ProjectService(
+                .storage,
+                disableOnDestroy: true,
+                context: makeContext()
+            )
+        }
+    }
+
+    @Test("An explicit GCP provider controls project and default region")
+    func explicitProvider() throws {
+        let context = makeContext()
+        let provider = GCP.Provider(
+            "secondary",
+            projectID: "secondary-project",
+            region: .europeWest1,
+            context: context
+        )
+        _ = GCP.Bucket(
+            "assets",
+            options: .provider(provider),
+            context: context
+        )
+        _ = GCP.Bucket(
+            "regional-assets",
+            location: .usEast1,
+            options: .provider(provider),
+            context: context
+        )
+        let vpc = GCP.VPC(
+            "network",
+            options: .provider(provider),
+            context: context
+        )
+        _ = GCP.FirewallRule(
+            "allow-web",
+            vpc: vpc,
+            action: .allow([.tcp(["443"])]),
+            sourceRanges: ["10.0.0.0/8"],
+            options: .provider(provider),
+            context: context
+        )
+
+        let bucket = try resource(type: "gcp:storage:Bucket", in: context)
+        let bucketProperties = try properties(of: bucket)
+        #expect(bucketProperties["project"] as? String == "secondary-project")
+        #expect(bucketProperties["location"] as? String == "europe-west1")
+        #expect((bucketProperties["name"] as? String)?.hasPrefix("secondary-project-") == true)
+        let options = try #require(bucket.pulumiProjectResources().values.first?.options)
+        #expect(options.provider?.description == "${testing-secondary}")
+
+        let regionalBucket = try properties(
+            type: "gcp:storage:Bucket",
+            in: context,
+            chosenName: "regional-assets"
+        )
+        #expect(regionalBucket["project"] as? String == "secondary-project")
+        #expect(regionalBucket["location"] as? String == "us-east1")
+
+        let subnetwork = try properties(type: "gcp:compute:Subnetwork", in: context)
+        #expect(subnetwork["project"] as? String == "secondary-project")
+        #expect(subnetwork["region"] as? String == "europe-west1")
+        let firewall = try properties(type: "gcp:compute:Firewall", in: context)
+        #expect(firewall["project"] as? String == "secondary-project")
+    }
+
+    @Test("Reused service identities retain later resource options")
+    func sharedServiceIdentityOptions() throws {
+        let context = makeContext()
+        let api = GCP.ProjectService(.apiGateway, context: context)
+        let provider = GCP.Provider(
+            "same-project",
+            projectID: "example-project",
+            context: context
+        )
+        _ = GCP.ServiceIdentity.shared(.apiGateway, context: context)
+        let identity = GCP.ServiceIdentity.shared(
+            .apiGateway,
+            options: .provider(provider).protect().dependsOn([api]),
+            context: context
+        )
+
+        let options = try #require(
+            identity.resource.pulumiProjectResources().values.first?.options
+        )
+        #expect(options.protect == true)
+        #expect(options.provider?.description == "${testing-same-project}")
+        #expect(options.dependsOn?.map(\.description) == ["${testing-apigateway-googleapis-com-api}"])
+        #expect(
+            context.store.resources.filter {
+                $0.type == "gcp:projects:ServiceIdentity"
+            }.count == 1
+        )
+    }
+
+    @Test("Project-scoped resources are distinct across explicit provider projects")
+    func sharedResourcesAcrossProjects() {
+        let context = makeContext()
+        let secondary = GCP.Provider(
+            "secondary",
+            projectID: "secondary-project",
+            context: context
+        )
+
+        _ = GCP.ServiceIdentity.shared(.storage, context: context)
+        _ = GCP.ServiceIdentity.shared(
+            .storage,
+            options: .provider(secondary),
+            context: context
+        )
+
+        let identities = context.store.resources.filter {
+            $0.type == "gcp:projects:ServiceIdentity"
+        }
+        #expect(identities.count == 2)
+        #expect(Set(identities.map(\.chosenName)).count == 2)
     }
 
     @Test("Stages that do not start with a letter still produce valid GCP names")

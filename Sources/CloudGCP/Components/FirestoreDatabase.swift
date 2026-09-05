@@ -50,7 +50,8 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "name": physicalDatabaseID,
-                    "locationId": locationID ?? context.gcpRegion.rawValue,
+                    "locationId": locationID
+                        ?? GCP.resolvedRegion(nil, options: options, context: context).rawValue,
                     "type": mode.rawValue,
                     "databaseEdition": edition.rawValue,
                     "concurrencyMode": concurrencyMode.rawValue,
@@ -146,10 +147,6 @@ extension GCP.FirestoreDatabase {
 }
 
 extension GCP.FirestoreDatabase: GCPLinkable {
-    public func grantAccess(to serviceAccount: GCP.ServiceAccount) {
-        _ = accessGrants(to: serviceAccount)
-    }
-
     public var actions: [String] {
         [GCP.IAMRole.datastoreUser.rawValue]
     }
@@ -164,7 +161,7 @@ extension GCP.FirestoreDatabase: GCPLinkable {
             name: database.chosenName,
             properties: [
                 "name": name,
-                "project_id": database.context.gcpProjectID,
+                "project_id": database.gcpProjectID,
             ]
         )
     }
