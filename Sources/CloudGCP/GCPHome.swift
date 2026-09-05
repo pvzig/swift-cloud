@@ -68,6 +68,7 @@ extension GCP {
             }
             return stderr.localizedCaseInsensitiveContains("not found")
                 || stderr.localizedCaseInsensitiveContains("404")
+                || stderr.localizedCaseInsensitiveContains("The following URLs matched no objects or files:")
         }
 
         public func putItem<T: HomeProviderItem>(

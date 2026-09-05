@@ -72,7 +72,6 @@ extension GCP {
                     "name": tokenize(context.gcpStage, name, "backend", maxLength: 63),
                     "loadBalancingScheme": "EXTERNAL_MANAGED",
                     "protocol": "HTTP",
-                    "timeoutSec": 30,
                     "enableCdn": cdn.isEnabled,
                     "cdnPolicy": cdn.properties,
                     "backends": [["group": networkEndpointGroup.id]],

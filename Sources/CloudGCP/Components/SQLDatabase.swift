@@ -32,6 +32,7 @@ extension GCP {
             databaseName: String? = nil,
             location: Region? = nil,
             tier: String = "db-custom-1-3840",
+            edition: Edition = .enterprise,
             backupsEnabled: Bool = true,
             pointInTimeRecoveryEnabled: Bool = true,
             availability: Availability = .zonal,
@@ -82,6 +83,7 @@ extension GCP {
                     "databaseVersion": engine.databaseVersion,
                     "settings": [
                         "tier": tier,
+                        "edition": edition.rawValue,
                         "availabilityType": availability.rawValue,
                         "databaseFlags": iamAuthenticationEnabled
                             ? [
@@ -142,6 +144,7 @@ extension GCP {
                         "masterInstanceName": primaryInstance.name,
                         "settings": [
                             "tier": tier,
+                            "edition": edition.rawValue,
                             "databaseFlags": iamAuthenticationEnabled
                                 ? [
                                     [
@@ -261,12 +264,18 @@ extension GCP.SQLDatabase {
             "IAM database users require iamAuthenticationEnabled"
         )
         let resourceName = "\(instance.chosenName)-iam-user-\(serviceAccount.resource.chosenName)"
-        let username = Strings.trimSuffix(
-            serviceAccount.email,
-            suffix: ".gserviceaccount.com",
-            name: "\(instance.chosenName)-\(serviceAccount.resource.chosenName)-iam-username",
-            context: instance.context
-        ).result
+        // PostgreSQL omits this suffix; MySQL's creation API requires the full email.
+        let username =
+            if engine.isPostgres {
+                Strings.trimSuffix(
+                    serviceAccount.email,
+                    suffix: ".gserviceaccount.com",
+                    name: "\(instance.chosenName)-\(serviceAccount.resource.chosenName)-iam-username",
+                    context: instance.context
+                ).result
+            } else {
+                serviceAccount.email
+            }
         return GCP.sharedResource(
             name: resourceName,
             type: "gcp:sql:User",

@@ -176,7 +176,7 @@ struct GatewayAndEventingTests {
         }
     }
 
-    @Test("Gateways share one API Gateway service agent and version their API config")
+    @Test("Gateways share one API Gateway service agent and use provider-generated config IDs")
     func sharedGatewayIdentity() throws {
         let context = makeContext()
         let backendIdentity = GCP.ServiceAccount("gateway-identity", context: context)
@@ -206,39 +206,78 @@ struct GatewayAndEventingTests {
         }
         #expect(tokenGrants.count == 1)
 
-        // API configs are immutable, so distinct documents need distinct ids.
-        let ids = try context.store.resources
+        let prefixes = try context.store.resources
             .filter { $0.type == "gcp:apigateway:ApiConfig" }
             .map { resource -> String in
                 let encoded = try JSONEncoder().encode(try #require(resource.properties))
                 let object = try #require(
                     JSONSerialization.jsonObject(with: encoded) as? [String: Any]
                 )
-                return try #require(object["apiConfigId"] as? String)
+                #expect(object["apiConfigId"] == nil)
+                return try #require(object["apiConfigIdPrefix"] as? String)
             }
-        #expect(ids.count == 2)
-        #expect(Set(ids).count == 2)
+        #expect(prefixes.count == 2)
+        #expect(Set(prefixes).count == 2)
     }
 
-    @Test("API Gateway versions its config when the backend identity changes")
-    func apiGatewayBackendIdentityRevision() throws {
-        func configurationID(serviceAccountName: String) throws -> String {
+    @Test(
+        "API Gateway reserves room for provider-generated revision suffixes",
+        arguments: ["public-api", String(repeating: "long-api-name-", count: 10)]
+    )
+    func apiGatewayRevisionPrefix(name: String) throws {
+        let context = makeContext()
+        let serviceAccount = GCP.ServiceAccount("gateway", context: context)
+        let gateway = GCP.APIGateway(
+            name,
+            document: .openAPI(contents: "openapi: 3.0.0"),
+            serviceAccount: serviceAccount,
+            context: context
+        )
+        let configuration = try properties(of: gateway.configuration)
+        let prefix = try #require(configuration["apiConfigIdPrefix"] as? String)
+
+        #expect(configuration["apiConfigId"] == nil)
+        #expect(prefix.count <= 37)
+        #expect(prefix.first?.isLetter == true)
+        #expect(prefix.hasSuffix("-"))
+        let gatewayProperties = try properties(of: gateway.gateway)
+        #expect(gatewayProperties["apiConfig"] as? String == gateway.configuration.id.description)
+    }
+
+    @Test("API Gateway leaves revision IDs to the provider when an interpolated backend changes")
+    func apiGatewayBackendOutputRevision() throws {
+        func configuration(location: GCP.Region) throws -> [String: Any] {
             let context = makeContext()
-            let serviceAccount = GCP.ServiceAccount(serviceAccountName, context: context)
-            _ = GCP.APIGateway(
-                "public-api",
-                document: .openAPI(contents: "openapi: 3.0.0"),
-                serviceAccount: serviceAccount,
+            let serviceAccount = GCP.ServiceAccount("gateway", context: context)
+            let backend = GCP.CloudRunService(
+                "backend",
+                image: "us-docker.pkg.dev/example/backend:latest",
+                location: location,
                 context: context
             )
-            let configuration = try properties(type: "gcp:apigateway:ApiConfig", in: context)
-            return try #require(configuration["apiConfigId"] as? String)
+            _ = GCP.APIGateway(
+                "public-api",
+                document: .openAPI(contents: "x-google-backend:\n  address: \(backend.url)"),
+                serviceAccount: serviceAccount,
+                backends: [backend],
+                context: context
+            )
+            return try properties(type: "gcp:apigateway:ApiConfig", in: context)
         }
 
-        let firstID = try configurationID(serviceAccountName: "gateway-primary")
-        let secondID = try configurationID(serviceAccountName: "gateway-secondary")
+        let east = try configuration(location: .usEast1)
+        let west = try configuration(location: .usWest1)
 
-        #expect(firstID != secondID)
+        for configuration in [east, west] {
+            // Both revisions have the same token, whose resolved URI changes at
+            // deployment. An explicit ID would prevent safe config replacement.
+            let documents = try #require(configuration["openapiDocuments"] as? [[String: Any]])
+            let document = try #require(documents.first?["document"] as? [String: Any])
+            let contents = try #require(document["contents"] as? [String: Any])
+            #expect(contents["fn::toBase64"] as? String == "x-google-backend:\n  address: ${testing-backend.uri}")
+            #expect(configuration["apiConfigId"] == nil)
+            #expect(configuration["apiConfigIdPrefix"] as? String == "testing-public-api-config-")
+        }
     }
 
     @Test("Eventarc triggers share one project receiver grant")

@@ -28,6 +28,7 @@ struct EdgeTests {
         let backend = try properties(type: "gcp:compute:BackendService", in: context)
         #expect(backend["enableCdn"] as? Bool == true)
         #expect(backend["loadBalancingScheme"] as? String == "EXTERNAL_MANAGED")
+        #expect(backend["timeoutSec"] == nil)
         let policy = try #require(backend["cdnPolicy"] as? [String: Any])
         #expect(policy["signedUrlCacheMaxAgeSec"] as? Int == 0)
 

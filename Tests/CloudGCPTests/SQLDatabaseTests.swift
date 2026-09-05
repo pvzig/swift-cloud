@@ -27,6 +27,7 @@ struct SQLDatabaseTests {
 
         let settings = try #require(instance["settings"] as? [String: Any])
         #expect(settings["tier"] as? String == "db-custom-1-3840")
+        #expect(settings["edition"] as? String == "ENTERPRISE")
         let ipConfiguration = try #require(settings["ipConfiguration"] as? [String: Any])
         #expect(ipConfiguration["ipv4Enabled"] as? Bool == true)
 
@@ -44,6 +45,42 @@ struct SQLDatabaseTests {
             user["name"] as? String
                 == "${production-main-backend-service-account-iam-username.result}"
         )
+    }
+
+    @Test(
+        "Cloud SQL applies its edition to both primary and replicas",
+        arguments: [GCP.SQLDatabase.Edition.enterprise, .enterprisePlus]
+    )
+    func replicaEdition(edition: GCP.SQLDatabase.Edition) throws {
+        let context = makeContext()
+        let tier = edition == .enterprise ? "db-custom-1-3840" : "db-perf-optimized-N-2"
+        let database = GCP.SQLDatabase(
+            "main",
+            tier: tier,
+            edition: edition,
+            readReplicaCount: 1,
+            context: context
+        )
+
+        for instance in [database.instance] + database.readReplicas {
+            let instanceProperties = try properties(of: instance)
+            let settings = try #require(instanceProperties["settings"] as? [String: Any])
+            #expect(settings["tier"] as? String == tier)
+            #expect(settings["edition"] as? String == edition.rawValue)
+        }
+    }
+
+    @Test("MySQL IAM users retain the full service-account email")
+    func mysqlIAMUser() throws {
+        let context = makeContext()
+        let serviceAccount = GCP.ServiceAccount("backend", context: context)
+        _ = GCP.SQLDatabase("main", engine: .mysql8, context: context)
+            .allowConnections(from: serviceAccount)
+
+        let user = try properties(type: "gcp:sql:User", in: context)
+        #expect(user["name"] as? String == serviceAccount.email.description)
+        #expect(user["type"] as? String == "CLOUD_IAM_SERVICE_ACCOUNT")
+        #expect(context.store.variables.isEmpty)
     }
 
     @Test("Engine family comes from databaseVersion, not the connection scheme")

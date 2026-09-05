@@ -95,9 +95,11 @@ equivalent.
   general alias operation emits a CNAME for hostname targets.
 - CDN path prefixes are normalized to `/*` rules, certificate physical names
   include the hostname digest, and every Cloud Run origin uses its own region.
-- API Gateway configurations are immutable. The config id embeds a digest of
-  the document and backend service-account identity so either change creates a
-  new config and repoints the gateway instead of recreating an in-use id.
+- API Gateway configurations are immutable. A stable `apiConfigIdPrefix`
+  leaves room for the provider's unique suffix, so every replacement receives
+  a new ID and repoints the gateway. This also covers resolved document and
+  service-account changes that retain the same Swift Output interpolation
+  tokens. Migrating from explicit config IDs replaces the config once.
 - Container images provide Pulumi an inline Dockerfile and opt out of image
   builds during previews. Deployments still build the release binary before
   Pulumi builds and pushes the image.
@@ -144,6 +146,13 @@ equivalent.
   `databaseVersion`. IAM database users are created only when IAM
   authentication is enabled, and provider-generated instance names permit
   replacement after Google's deleted-name retention window.
+- Cloud SQL explicitly defaults to Enterprise edition for the custom default
+  tier, including on PostgreSQL 16 and later. Callers can select Enterprise
+  Plus with a compatible predefined tier; replicas use the selected edition.
+  IAM user creation preserves full service-account emails for MySQL and omits
+  `.gserviceaccount.com` only for PostgreSQL.
+- HTTPS load balancers omit `timeoutSec` on serverless NEG backends because
+  Google rejects configuring that timeout.
 - VPC-dependent Cloud SQL, replicas, Redis, and Cloud NAT follow their private
   service connection and subnet region. Firewall ingress requires a source and
   emits only the current `logConfig` shape.
@@ -163,6 +172,8 @@ equivalent.
   new passphrase or start from absent state. GCS bootstrap tolerates a verified
   concurrent bucket-create winner, and authentication, authorization,
   transport, or executable failures propagate without overwriting state.
+  Object reads recognize `gcloud storage cp`'s unmatched-object diagnostic,
+  allowing an empty home bucket to initialize state and its passphrase.
 - Pulumi inherits the caller's `PATH`, allowing Docker credential helpers from
   Homebrew and Google Cloud SDK installations to remain discoverable.
 - There is no native Swift runtime for Cloud Run functions. Swift functions
@@ -203,14 +214,21 @@ equivalent.
 
 ## Validation
 
+- The branch-review fixes add regressions for the real gcloud unmatched-object
+  diagnostic, failure propagation, Cloud SQL primary/replica editions, MySQL
+  IAM identities, serverless timeout omission, and provider-generated API
+  Gateway revisions with unresolved backend outputs.
 - Formatted all changed Swift sources with `swift-format`.
 - Built all package products with the Swift 6.3 release toolchain.
-- Ran the complete test suite with Swift 6.3: 88 tests in 19 suites passed,
+- Ran the complete test suite with Swift 6.3.3: 92 tests in 19 suites passed,
   including fail-closed home state, provider scoping, Pulumi interpolation,
   deployment ordering, edge ingress and DNS, schema-shape, duration, Cloud SQL,
   Pub/Sub, and Spanner regressions.
 - Encoded a production deployment fixture containing more than 90 resources
   and verified that every Pulumi logical name is unique.
+- Checked 92 GCP resource input shapes from the rebuilt fixture against the
+  pinned `9.33.0` provider schema, including required and nested properties.
+  Schema checks do not resolve Outputs or validate live Google API behavior.
 - Exercised GCS home bootstrap and JSON round trips through an injected,
   in-memory `gcloud` command boundary; no live cloud calls were made.
 - Ran `git diff --check` and inspected the final worktree.

@@ -598,7 +598,9 @@ let worker = GCP.CloudRunWorkerPool(
 #### API Gateway
 
 This component creates a managed Google Cloud API Gateway from an OpenAPI or
-gRPC document and authorizes it to invoke its Cloud Run backends.
+gRPC document and authorizes it to invoke its Cloud Run backends. The provider
+generates a unique config ID for each immutable revision, including when an
+interpolated backend URL or service-account email changes.
 
 ```swift
 let gatewayIdentity = GCP.ServiceAccount("gateway")
@@ -709,7 +711,9 @@ let trigger = GCP.EventarcTrigger(
 
 This component creates a PostgreSQL or MySQL Cloud SQL instance and logical
 database with optional private networking, regional availability, IAM users,
-and read replicas.
+and read replicas. It defaults to Enterprise edition, which supports the
+default custom tier. Use `edition: .enterprisePlus` with a compatible
+predefined `tier` to select Enterprise Plus; replicas use the same edition.
 
 ```swift
 let vpc = GCP.VPC("main")

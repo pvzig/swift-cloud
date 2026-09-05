@@ -42,7 +42,11 @@ struct GCPHomeTests {
                         throw ShellError.terminated(errorCode: 1, stderr: downloadFailure)
                     }
                     guard let data = objects[source] else {
-                        throw ShellError.terminated(errorCode: 1, stderr: "404 object not found")
+                        throw ShellError.terminated(
+                            errorCode: 1,
+                            stderr:
+                                "ERROR: (gcloud.storage.cp) The following URLs matched no objects or files:\n\(source)"
+                        )
                     }
                     try data.write(to: URL(filePath: destination))
                 } else {
@@ -102,9 +106,30 @@ struct GCPHomeTests {
         #expect(commands.filter { $0.contains("cp") }.count == 3)
     }
 
-    @Test("Authorization failures never replace the passphrase")
-    func passphraseFailureIsFailClosed() async {
-        let recorder = CommandRecorder(downloadFailure: "HTTP 403 permission denied")
+    @Test("A fresh home can start without an existing stack snapshot")
+    func missingState() async throws {
+        let recorder = CommandRecorder()
+        let home = GCP.Home(projectID: "example-project", location: .usCentral1) { arguments in
+            try await recorder.run(arguments)
+        }
+        let context = makeContext()
+
+        try await home.bootstrap(with: context)
+        try await home.pullState(context: context)
+        _ = try await home.passphrase(with: context)
+
+        let commands = await recorder.commands
+        let transfers = commands.filter { $0.contains("cp") }
+        #expect(transfers.count == 3)
+        #expect(transfers.filter { $0[$0.count - 2].hasPrefix("gs://") }.count == 2)
+    }
+
+    @Test(
+        "Failed home reads never replace state or passphrases",
+        arguments: ["HTTP 403 permission denied", "HTTP 500 internal server error", "Connection reset by peer"]
+    )
+    func passphraseFailureIsFailClosed(diagnostic: String) async {
+        let recorder = CommandRecorder(downloadFailure: diagnostic)
         let home = GCP.Home(projectID: "example-project", location: .usCentral1) { arguments in
             try await recorder.run(arguments)
         }
@@ -113,12 +138,23 @@ struct GCPHomeTests {
             _ = try await home.passphrase(with: makeContext())
             Issue.record("Expected the authorization failure to propagate")
         } catch let ShellError.terminated(_, stderr) {
-            #expect(stderr == "HTTP 403 permission denied")
+            #expect(stderr == diagnostic)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+
+        do {
+            try await home.pullState(context: makeContext())
+            Issue.record("Expected the state read failure to propagate")
+        } catch let ShellError.terminated(_, stderr) {
+            #expect(stderr == diagnostic)
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
 
         let commands = await recorder.commands
-        #expect(commands.filter { $0.contains("cp") }.count == 1)
+        let transfers = commands.filter { $0.contains("cp") }
+        #expect(transfers.count == 2)
+        #expect(transfers.allSatisfy { $0[$0.count - 2].hasPrefix("gs://") })
     }
 }

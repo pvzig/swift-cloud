@@ -69,15 +69,15 @@ extension GCP {
                 properties: [
                     "project": context.gcpProjectID,
                     "api": api.output.keyPath("apiId"),
-                    // API configs are immutable. Deriving the id from the document
-                    // and backend identity means changing either creates a new config
-                    // instead of trying to recreate an in-use id, which GCP rejects.
-                    "apiConfigId": tokenize(
+                    // Pulumi resolves document and identity outputs before deciding
+                    // whether to replace this immutable config. Let the provider
+                    // generate a fresh ID for every replacement, including changes
+                    // that leave the Swift interpolation tokens unchanged.
+                    "apiConfigIdPrefix": tokenize(
                         apiID,
                         "config",
-                        digest(document.fingerprint, serviceAccount.email),
-                        maxLength: 63
-                    ),
+                        maxLength: 36
+                    ) + "-",
                     "displayName": displayName,
                     "gatewayConfig": [
                         "backendConfig": [
@@ -121,17 +121,6 @@ extension GCP.APIGateway {
             configurationPath: String = "api_config.yaml"
         )
         case openAPI(contents: String, path: String = "openapi.yaml")
-
-        /// A stable representation of everything that makes this configuration
-        /// distinct, used to give each revision its own immutable config id.
-        fileprivate var fingerprint: String {
-            switch self {
-            case .grpc(let fileDescriptorSet, let descriptorPath, let configuration, let configurationPath):
-                "grpc:\(descriptorPath):\(fileDescriptorSet.base64EncodedString()):\(configurationPath):\(configuration)"
-            case .openAPI(let contents, let path):
-                "openapi:\(path):\(contents)"
-            }
-        }
 
         fileprivate var openapiDocuments: AnyEncodable? {
             switch self {
